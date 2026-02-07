@@ -8,63 +8,100 @@ export component ClockScreen inherits VerticalLayout {
 
     callback intent(intent_name: string, intent_arg: string);
 
-    spacing: 8px;
+    spacing: 16px;
+    alignment: start;
 
-    Text {
-        text: "Clock: ";
-        font-size: 16px;
-    }
-
-    Text {
-        text: root.clock_text;
-        font-size: 28px;
-    }
-
-    Text {
-        text: root.clock_running ? "Running" : "Paused";
-        font-size: 14px;
-    }
-
-    HorizontalLayout {
-        spacing: 8px;
+    // Time display
+    VerticalLayout {
+        spacing: 4px;
 
         Text {
-            text: "Timezone:";
-            vertical-alignment: center;
-            font-size: 14px;
+            text: root.clock_text;
+            font-size: 42px;
+            font-weight: 300;
+            color: #e0e0f0;
+            horizontal-alignment: center;
+            letter-spacing: 2px;
         }
 
-        ComboBox {
-            width: 220px;
-            model: [
-                "UTC",
-                "America/New_York",
-                "America/Chicago",
-                "America/Denver",
-                "America/Los_Angeles",
-            ];
-            current-value: root.clock_timezone;
-            selected(value) => {
-                root.intent("clock.set_timezone", value);
+        // Status pill
+        HorizontalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: status_text.preferred-width + 20px;
+                height: 22px;
+                border-radius: 11px;
+                background: root.clock_running ? #1a3a2a : #3a2a1a;
+
+                status_text := Text {
+                    text: root.clock_running ? "Running" : "Paused";
+                    font-size: 11px;
+                    color: root.clock_running ? #66cc88 : #cc8844;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
             }
         }
     }
 
-    Rectangle {
-        width: 100px;
-        height: 30px;
-        border-width: 1px;
-        border-color: #808080;
+    // Controls
+    VerticalLayout {
+        spacing: 10px;
+        padding-top: 8px;
 
-        Text {
-            text: root.clock_running ? "Pause" : "Resume";
-            horizontal-alignment: center;
-            vertical-alignment: center;
+        // Timezone row
+        HorizontalLayout {
+            spacing: 8px;
+            alignment: center;
+
+            Text {
+                text: "Timezone";
+                font-size: 13px;
+                color: #8888bb;
+                vertical-alignment: center;
+            }
+
+            ComboBox {
+                width: 200px;
+                model: [
+                    "UTC",
+                    "America/New_York",
+                    "America/Chicago",
+                    "America/Denver",
+                    "America/Los_Angeles",
+                ];
+                current-value: root.clock_timezone;
+                selected(value) => {
+                    root.intent("clock.set_timezone", value);
+                }
+            }
         }
 
-        TouchArea {
-            clicked => {
-                root.intent(root.clock_running ? "clock.pause" : "clock.resume", "");
+        // Pause/resume button
+        HorizontalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: 110px;
+                height: 34px;
+                border-radius: 6px;
+                background: toggle_touch.pressed ? #4a4a7a : (toggle_touch.has-hover ? #3a3a6a : #2a2a4a);
+
+                Text {
+                    text: root.clock_running ? "Pause" : "Resume";
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: #e0e0f0;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                toggle_touch := TouchArea {
+                    clicked => {
+                        root.intent(root.clock_running ? "clock.pause" : "clock.resume", "");
+                    }
+                }
             }
         }
     }

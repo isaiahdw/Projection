@@ -3,16 +3,66 @@ export component DevicesScreen inherits VerticalLayout {
     pure callback vm_list_indices(path: string, rev: int) -> [int];
     pure callback vm_list_row_text(path: string, index: int, field: string, rev: int) -> string;
 
-    spacing: 6px;
+    spacing: 8px;
 
-    Text {
-        text: "Devices";
-        font-size: 16px;
+    // Header
+    HorizontalLayout {
+        height: 24px;
+        padding-left: 4px;
+
+        Text {
+            text: "Devices";
+            font-size: 14px;
+            font-weight: 600;
+            color: #8888bb;
+            vertical-alignment: center;
+        }
     }
 
-    for i in root.vm_list_indices("/screen/vm/devices", root.vm_rev): Text {
-        text: root.vm_list_row_text("/screen/vm/devices", i, "name", root.vm_rev)
-            + " - "
-            + root.vm_list_row_text("/screen/vm/devices", i, "status_text", root.vm_rev);
+    // Scrollable device list
+    Flickable {
+        viewport-height: self.height;
+
+        VerticalLayout {
+            spacing: 2px;
+
+            for i in root.vm_list_indices("/screen/vm/devices", root.vm_rev): Rectangle {
+                height: 36px;
+                border-radius: 4px;
+                background: row_touch.has-hover ? #2a2a4a : transparent;
+
+                HorizontalLayout {
+                    padding-left: 12px;
+                    padding-right: 12px;
+
+                    // Device name
+                    Text {
+                        text: root.vm_list_row_text("/screen/vm/devices", i, "name", root.vm_rev);
+                        font-size: 13px;
+                        color: #e0e0f0;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+
+                    // Status
+                    Rectangle {
+                        width: status_label.preferred-width + 16px;
+                        height: 20px;
+                        border-radius: 10px;
+                        background: #1a3a2a;
+
+                        status_label := Text {
+                            text: root.vm_list_row_text("/screen/vm/devices", i, "status_text", root.vm_rev);
+                            font-size: 11px;
+                            color: #66cc88;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+
+                row_touch := TouchArea {}
+            }
+        }
     }
 }

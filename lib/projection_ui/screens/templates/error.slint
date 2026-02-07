@@ -2,26 +2,59 @@ export component ErrorScreen inherits VerticalLayout {
     in property <int> vm_rev: 0;
     pure callback vm_text(path: string, rev: int) -> string;
 
-    spacing: 8px;
+    spacing: 12px;
+    padding: 8px;
 
-    Text {
-        text: "Screen Error";
-        font-size: 18px;
+    // Error icon + title
+    HorizontalLayout {
+        spacing: 8px;
+
+        Rectangle {
+            width: 28px;
+            height: 28px;
+            border-radius: 14px;
+            background: #3a2020;
+
+            Text {
+                text: "!";
+                font-size: 16px;
+                font-weight: 700;
+                color: #cc4444;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+
+        Text {
+            text: root.vm_text("/screen/vm/title", root.vm_rev);
+            font-size: 16px;
+            font-weight: 600;
+            color: #cc4444;
+            vertical-alignment: center;
+        }
     }
 
-    Text {
-        text: root.vm_text("/screen/vm/title", root.vm_rev);
-        font-size: 14px;
+    // Message
+    Rectangle {
+        border-radius: 6px;
+        background: #232342;
+
+        VerticalLayout {
+            padding: 12px;
+
+            Text {
+                text: root.vm_text("/screen/vm/message", root.vm_rev);
+                wrap: word-wrap;
+                font-size: 13px;
+                color: #c0c0d0;
+            }
+        }
     }
 
-    Text {
-        text: root.vm_text("/screen/vm/message", root.vm_rev);
-        wrap: word-wrap;
-        font-size: 14px;
-    }
-
+    // Module info
     Text {
         text: "Module: " + root.vm_text("/screen/vm/screen_module", root.vm_rev);
-        font-size: 12px;
+        font-size: 11px;
+        color: #666688;
     }
 }
