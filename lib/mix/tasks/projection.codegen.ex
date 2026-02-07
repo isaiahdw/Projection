@@ -40,31 +40,66 @@ defmodule Mix.Tasks.Projection.Codegen do
       )
       |> Enum.map(&unwrap_task_result!/1)
 
+    screen_state_results =
+      specs
+      |> Task.async_stream(
+        fn spec ->
+          path = Path.join(generated_dir, spec.state_file)
+          write_file_if_changed(path, render_screen_state_slint(spec))
+        end,
+        ordered: false,
+        timeout: :infinity,
+        max_concurrency: max_concurrency()
+      )
+      |> Enum.map(&unwrap_task_result!/1)
+
     mod_result =
       write_file_if_changed(Path.join(generated_dir, "mod.rs"), render_generated_mod(specs))
 
     routes_result =
       write_file_if_changed(Path.join(generated_dir, "routes.slint"), render_routes_slint(routes))
 
-    screen_host_fields = merge_screen_host_fields(specs, error_screen_fields())
-
     screen_host_result =
       write_file_if_changed(
         Path.join(generated_dir, "screen_host.slint"),
-        render_screen_host_slint(specs, routes, nav_routes, screen_host_fields)
+        render_screen_host_slint(specs, routes, nav_routes)
       )
 
     app_result =
       write_file_if_changed(
         Path.join(generated_dir, "app.slint"),
-        render_generated_app_slint(screen_host_fields)
+        render_generated_app_slint(specs)
+      )
+
+    error_state_result =
+      write_file_if_changed(
+        Path.join(generated_dir, "error_state.slint"),
+        render_error_state_slint()
+      )
+
+    build_rs_result =
+      write_file_if_changed(
+        Path.join(File.cwd!(), "slint/ui_host/build.rs"),
+        render_build_rs(specs)
       )
 
     written_count =
-      Enum.count(screen_results ++ [mod_result, routes_result, screen_host_result, app_result], fn
-        :written -> true
-        _ -> false
-      end)
+      Enum.count(
+        screen_results ++
+          screen_state_results ++
+          [
+            mod_result,
+            routes_result,
+            screen_host_result,
+            app_result,
+            error_state_result,
+            build_rs_result
+          ],
+        fn
+          :written -> true
+          _ -> false
+        end
+      )
 
     Mix.shell().info(
       "projection.codegen generated #{length(specs)} screen module(s), #{length(routes)} route constant(s), wrote #{written_count} file(s)"
@@ -192,7 +227,9 @@ defmodule Mix.Tasks.Projection.Codegen do
       screen_name: screen_name,
       component_name: module |> Module.split() |> List.last() |> Kernel.<>("Screen"),
       file_name: screen_name,
-      fields: codegen_fields
+      fields: codegen_fields,
+      global_name: camelize(screen_name) <> "State",
+      state_file: "#{screen_name}_state.slint"
     }
   end
 
@@ -378,6 +415,8 @@ defmodule Mix.Tasks.Projection.Codegen do
     if spec.fields == [] do
       render_empty_screen_module()
     else
+      global_name = spec.global_name
+      global_type = "crate::#{global_name}"
       direct_fields = Enum.filter(spec.fields, &(&1.source.kind == :direct))
       id_table_fields = Enum.filter(spec.fields, &(&1.source.kind == :id_table))
 
@@ -389,13 +428,13 @@ defmodule Mix.Tasks.Projection.Codegen do
       direct_render_setters =
         direct_fields
         |> Enum.map_join("\n", fn field ->
-          "        set_#{field.name}_from_vm(ui, screen_vm, vm)?;"
+          "        set_#{field.name}_from_vm(&g, screen_vm)?;"
         end)
 
       id_table_render_setters =
         id_table_roots
         |> Enum.map_join("\n", fn {root, _fields} ->
-          "        apply_id_table_#{root}_from_vm(ui, screen_vm, vm)?;"
+          "        apply_id_table_#{root}_from_vm(&g, screen_vm)?;"
         end)
 
       render_field_setters =
@@ -421,16 +460,16 @@ defmodule Mix.Tasks.Projection.Codegen do
 
       direct_field_helpers =
         direct_fields
-        |> Enum.map_join("\n", &render_field_helper/1)
+        |> Enum.map_join("\n", &render_field_helper(&1, global_type))
 
       id_table_field_helpers =
         id_table_fields
-        |> Enum.map_join("\n", &render_field_helper/1)
+        |> Enum.map_join("\n", &render_field_helper(&1, global_type))
 
       id_table_root_helpers =
         id_table_roots
         |> Enum.map_join("\n", fn {root, fields} ->
-          render_id_table_root_helper(root, fields)
+          render_id_table_root_helper(root, fields, global_type)
         end)
 
       field_helpers =
@@ -476,10 +515,12 @@ defmodule Mix.Tasks.Projection.Codegen do
       """
       use crate::AppWindow;
       use crate::protocol::PatchOp;
+      use slint::ComponentHandle;
       use serde_json::Value;
 
       pub fn apply_render(ui: &AppWindow, vm: &Value) -> Result<(), String> {
           let screen_vm = vm.pointer("/screen/vm").and_then(Value::as_object);
+          let g = ui.global::<#{global_type}>();
       #{render_field_setters}
           bump_vm_rev(ui);
           Ok(())
@@ -487,6 +528,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
       pub fn apply_patch(ui: &AppWindow, ops: &[PatchOp], #{patch_vm_param}: &Value) -> Result<(), String> {
       #{patch_screen_vm_line}
+          let g = ui.global::<#{global_type}>();
           for op in ops {
               match op {
                   #{replace_add_pattern} => {
@@ -540,55 +582,56 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
   end
 
-  defp render_field_helper(%{
-         name: name,
-         type: type,
-         default: default,
-         source: %{kind: :direct}
-       }) do
+  defp render_field_helper(
+         %{
+           name: name,
+           type: type,
+           default: default,
+           source: %{kind: :direct}
+         },
+         global_name
+       ) do
     field = Atom.to_string(name)
     default_literal = rust_literal(type, default)
-    set_value_expr = rust_set_value_expr(name, type)
+    set_value_expr = rust_set_value_expr(name, type, "g")
 
     """
     fn set_#{field}_from_vm(
-        ui: &AppWindow,
+        g: &#{global_name},
         screen_vm: Option<&serde_json::Map<String, Value>>,
-        vm: &Value,
     ) -> Result<(), String> {
         if let Some(value) = screen_vm.and_then(|root| root.get("#{field}")) {
-            return set_#{field}_from_value(ui, "/screen/vm/#{field}", value);
+            return set_#{field}_from_value(g, "/screen/vm/#{field}", value);
         }
 
-        if let Some(value) = vm.get("#{field}") {
-            return set_#{field}_from_value(ui, "/#{field}", value);
-        }
-
-        set_#{field}_default(ui);
+        set_#{field}_default(g);
         Ok(())
     }
 
-    fn set_#{field}_from_value(ui: &AppWindow, path: &str, value: &Value) -> Result<(), String> {
+    fn set_#{field}_from_value(g: &#{global_name}, path: &str, value: &Value) -> Result<(), String> {
         #{set_value_expr}
     }
 
-    fn set_#{field}_default(ui: &AppWindow) {
-        ui.set_#{field}(#{default_literal});
+    fn set_#{field}_default(g: &#{global_name}) {
+        g.set_#{field}(#{default_literal});
     }
     """
   end
 
-  defp render_field_helper(%{
-         name: name,
-         default: default,
-         source: %{kind: :id_table, root: _root, role: role}
-       }) do
+  defp render_field_helper(
+         %{
+           name: name,
+           default: default,
+           source: %{kind: :id_table, root: _root, role: role}
+         },
+         global_name
+       ) do
     field = Atom.to_string(name)
     default_literal = rust_literal(:list, default)
     extract_expr = rust_id_table_extract_expr(role)
 
     """
-    fn set_#{field}_from_parsed(ui: &AppWindow, parsed: &IdTableParsed) -> Result<(), String> {
+    fn set_#{field}_from_parsed(g: &#{global_name}, parsed: &IdTableParsed) -> Result<(), String> {
         #{extract_expr}
         let model = slint::VecModel::from(
             values
@@ -596,12 +639,12 @@ defmodule Mix.Tasks.Projection.Codegen do
                 .map(slint::SharedString::from)
                 .collect::<Vec<slint::SharedString>>(),
         );
-        ui.set_#{field}(slint::ModelRc::new(model));
+        g.set_#{field}(slint::ModelRc::new(model));
         Ok(())
     }
 
-    fn set_#{field}_default(ui: &AppWindow) {
-        ui.set_#{field}(#{default_literal});
+    fn set_#{field}_default(g: &#{global_name}) {
+        g.set_#{field}(#{default_literal});
     }
     """
   end
@@ -612,7 +655,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
     """
                       if #{condition} {
-                          set_#{target}_from_value(ui, path, value)?;
+                          set_#{target}_from_value(&g, path, value)?;
                       }
     """
   end
@@ -623,7 +666,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
     """
                       if #{condition} {
-                          set_#{target}_default(ui);
+                          set_#{target}_default(&g);
                       }
     """
   end
@@ -634,7 +677,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
     """
                       if #{condition} {
-                          apply_id_table_#{root_name}_from_vm(ui, screen_vm, vm)?;
+                          apply_id_table_#{root_name}_from_vm(&g, screen_vm)?;
                       }
     """
   end
@@ -645,7 +688,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
     """
                       if #{condition} {
-                          apply_id_table_#{root_name}_from_vm(ui, screen_vm, vm)?;
+                          apply_id_table_#{root_name}_from_vm(&g, screen_vm)?;
                       }
     """
   end
@@ -654,12 +697,6 @@ defmodule Mix.Tasks.Projection.Codegen do
     root_name = Atom.to_string(root)
     top_path = "/" <> root_name
     ~s(field_path == "#{top_path}")
-  end
-
-  defp rust_patch_match_condition(%{source: %{kind: :id_table, root: root}}) do
-    root_name = Atom.to_string(root)
-    top_path = "/" <> root_name
-    "field_path == \"#{top_path}\" || field_path.starts_with(\"#{top_path}/\")"
   end
 
   defp rust_id_table_root_patch_match_condition(root) when is_atom(root) do
@@ -683,33 +720,28 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
   end
 
-  defp render_id_table_root_helper(root, fields) do
+  defp render_id_table_root_helper(root, fields, global_name) do
     root_name = Atom.to_string(root)
 
     parsed_setters =
       fields
       |> Enum.map_join("\n", fn field ->
-        "    set_#{field.name}_from_parsed(ui, &parsed)?;"
+        "    set_#{field.name}_from_parsed(g, &parsed)?;"
       end)
 
     defaults =
       fields
       |> Enum.map_join("\n", fn field ->
-        "    set_#{field.name}_default(ui);"
+        "    set_#{field.name}_default(g);"
       end)
 
     """
     fn apply_id_table_#{root_name}_from_vm(
-        ui: &AppWindow,
+        g: &#{global_name},
         screen_vm: Option<&serde_json::Map<String, Value>>,
-        vm: &Value,
     ) -> Result<(), String> {
         if let Some(value) = screen_vm.and_then(|root| root.get("#{root_name}")) {
-            return apply_id_table_#{root_name}_from_value(ui, value, "/screen/vm/#{root_name}");
-        }
-
-        if let Some(value) = vm.get("#{root_name}") {
-            return apply_id_table_#{root_name}_from_value(ui, value, "/#{root_name}");
+            return apply_id_table_#{root_name}_from_value(g, value, "/screen/vm/#{root_name}");
         }
 
     #{defaults}
@@ -717,7 +749,7 @@ defmodule Mix.Tasks.Projection.Codegen do
     }
 
     fn apply_id_table_#{root_name}_from_value(
-        ui: &AppWindow,
+        g: &#{global_name},
         value: &Value,
         path: &str,
     ) -> Result<(), String> {
@@ -728,45 +760,45 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
   end
 
-  defp rust_set_value_expr(name, :string) do
+  defp rust_set_value_expr(name, :string, setter_target) do
     """
     let parsed = parse_string(value, path)?;
-        ui.set_#{name}(parsed.into());
+        #{setter_target}.set_#{name}(parsed.into());
         Ok(())
     """
   end
 
-  defp rust_set_value_expr(name, :bool) do
+  defp rust_set_value_expr(name, :bool, setter_target) do
     """
     let parsed = parse_bool(value, path)?;
-        ui.set_#{name}(parsed);
+        #{setter_target}.set_#{name}(parsed);
         Ok(())
     """
   end
 
-  defp rust_set_value_expr(name, :integer) do
+  defp rust_set_value_expr(name, :integer, setter_target) do
     """
     let parsed = parse_integer(value, path)?;
         let casted = i32::try_from(parsed)
             .map_err(|_| format!("value out of range for Slint int at path {path}: {parsed}"))?;
-        ui.set_#{name}(casted);
+        #{setter_target}.set_#{name}(casted);
         Ok(())
     """
   end
 
-  defp rust_set_value_expr(name, :float) do
+  defp rust_set_value_expr(name, :float, setter_target) do
     """
     let parsed = parse_float(value, path)?;
         let casted = parsed as f32;
         if !casted.is_finite() {
             return Err(format!("non-finite float at path {path}: {parsed}"));
         }
-        ui.set_#{name}(casted);
+        #{setter_target}.set_#{name}(casted);
         Ok(())
     """
   end
 
-  defp rust_set_value_expr(name, :list) do
+  defp rust_set_value_expr(name, :list, setter_target) do
     """
     let parsed = parse_string_list(value, path)?;
         let model = slint::VecModel::from(
@@ -775,7 +807,7 @@ defmodule Mix.Tasks.Projection.Codegen do
                 .map(slint::SharedString::from)
                 .collect::<Vec<slint::SharedString>>(),
         );
-        ui.set_#{name}(slint::ModelRc::new(model));
+        #{setter_target}.set_#{name}(slint::ModelRc::new(model));
         Ok(())
     """
   end
@@ -936,7 +968,73 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
   end
 
-  defp render_screen_host_slint(specs, routes, nav_routes, fields) do
+  defp render_screen_state_slint(spec) do
+    property_lines =
+      spec.fields
+      |> Enum.map_join("\n", fn field ->
+        "    in property <#{slint_type(field.type)}> #{field.name}: #{slint_literal(field.type, field.default)};"
+      end)
+
+    """
+    // generated by mix projection.codegen; do not edit manually
+    export global #{spec.global_name} {
+    #{property_lines}
+    }
+    """
+  end
+
+  defp render_error_state_slint do
+    property_lines =
+      error_state_fields()
+      |> Enum.map_join("\n", fn field ->
+        "    in property <#{slint_type(field.type)}> #{field.name}: #{slint_literal(field.type, field.default)};"
+      end)
+
+    """
+    // generated by mix projection.codegen; do not edit manually
+    export global ErrorState {
+    #{property_lines}
+    }
+    """
+  end
+
+  defp render_build_rs(specs) do
+    state_rerun_lines =
+      specs
+      |> Enum.map(fn spec ->
+        "    println!(\"cargo:rerun-if-changed=src/generated/#{spec.state_file}\");"
+      end)
+      |> Enum.sort()
+      |> Enum.join("\n")
+
+    ui_rerun_lines =
+      specs
+      |> Enum.map(fn spec ->
+        "    println!(\"cargo:rerun-if-changed=../../lib/projection_ui/ui/#{spec.file_name}.slint\");"
+      end)
+      |> Enum.uniq()
+      |> Enum.sort()
+      |> Enum.join("\n")
+
+    """
+    fn main() {
+        slint_build::compile("src/generated/app.slint")
+            .expect("failed to compile app.slint");
+
+        println!("cargo:rerun-if-changed=src/generated/app.slint");
+        println!("cargo:rerun-if-changed=src/generated/screen_host.slint");
+        println!("cargo:rerun-if-changed=src/generated/routes.slint");
+        println!("cargo:rerun-if-changed=src/generated/error_state.slint");
+    #{state_rerun_lines}
+
+        println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/app_shell.slint");
+        println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/error.slint");
+    #{ui_rerun_lines}
+    }
+    """
+  end
+
+  defp render_screen_host_slint(specs, routes, nav_routes) do
     spec_by_module = Map.new(specs, &{&1.module, &1})
 
     routes_with_specs =
@@ -953,20 +1051,24 @@ defmodule Mix.Tasks.Projection.Codegen do
         end
       end)
 
-    import_lines =
+    screen_import_lines =
       routes_with_specs
       |> Enum.map(fn {_route, spec} ->
         "import { #{spec.component_name} } from \"../../../../lib/projection_ui/ui/#{spec.file_name}.slint\";"
       end)
       |> Enum.uniq()
       |> Enum.sort()
-      |> Enum.join("\n")
 
-    property_lines =
-      fields
-      |> Enum.map_join("\n", fn field ->
-        "    in property <#{slint_type(field.type)}> #{field.name}: #{slint_literal(field.type, field.default)};"
+    state_import_lines =
+      specs
+      |> Enum.map(fn spec ->
+        "import { #{spec.global_name} } from \"#{spec.state_file}\";"
       end)
+      |> Enum.sort()
+
+    import_lines =
+      (screen_import_lines ++ state_import_lines)
+      |> Enum.join("\n")
 
     nav_item_lines =
       nav_routes
@@ -982,12 +1084,12 @@ defmodule Mix.Tasks.Projection.Codegen do
     // generated by mix projection.codegen; do not edit manually
     #{import_lines}
     import { ErrorScreen } from "../../../../lib/projection_ui/ui/error.slint";
+    import { ErrorState } from "error_state.slint";
     import { Routes } from "routes.slint";
 
     export component ScreenHost inherits VerticalLayout {
         in property <int> vm_rev: 0;
         in property <string> active_screen: "clock";
-    #{property_lines}
         callback ui_intent(intent_name: string, intent_arg: string);
         callback navigate(route_name: string, params_json: string);
 
@@ -1004,37 +1106,13 @@ defmodule Mix.Tasks.Projection.Codegen do
 
         if root.active_screen == "error": ErrorScreen {
             vm_rev: root.vm_rev;
-            title: root.error_title;
-            message: root.error_message;
-            screen_module: root.error_screen_module;
+            title: ErrorState.error_title;
+            message: ErrorState.error_message;
+            screen_module: ErrorState.error_screen_module;
             intent(intent_name, intent_arg) => { root.ui_intent(intent_name, intent_arg); }
         }
     }
     """
-  end
-
-  defp merge_screen_host_fields(specs, extra_fields) do
-    specs
-    |> Enum.flat_map(& &1.fields)
-    |> Kernel.++(extra_fields)
-    |> Enum.reduce(%{}, fn field, acc ->
-      name = field.name
-
-      case acc do
-        %{^name => existing} ->
-          if existing.type == field.type and existing.default == field.default do
-            acc
-          else
-            raise ArgumentError,
-                  "screen field conflict for #{inspect(field.name)} between schemas: #{inspect(existing)} vs #{inspect(field)}"
-          end
-
-        _ ->
-          Map.put(acc, name, field)
-      end
-    end)
-    |> Map.values()
-    |> Enum.sort_by(&Atom.to_string(&1.name))
   end
 
   defp id_table_column_values(%{order: order, by_id: by_id}, column)
@@ -1096,11 +1174,12 @@ defmodule Mix.Tasks.Projection.Codegen do
 
   defp render_screen_host_route_branch(route, spec) do
     route_id = slint_identifier(route.route_key)
+    state_name = spec.global_name
 
     field_bindings =
       spec.fields
       |> Enum.map_join("\n", fn field ->
-        "            #{field.name}: root.#{field.name};"
+        "            #{field.name}: #{state_name}.#{field.name};"
       end)
 
     """
@@ -1154,30 +1233,27 @@ defmodule Mix.Tasks.Projection.Codegen do
   defp slint_literal(:float, value), do: format_float(value)
   defp slint_literal(:list, value), do: slint_string_list_literal(value)
 
-  defp render_generated_app_slint(fields) do
-    property_lines =
-      fields
-      |> Enum.map_join("\n", fn field ->
-        "    in property <#{slint_type(field.type)}> #{field.name}: #{slint_literal(field.type, field.default)};"
+  defp render_generated_app_slint(specs) do
+    state_export_lines =
+      specs
+      |> Enum.map(fn spec ->
+        "export { #{spec.global_name} } from \"#{spec.state_file}\";"
       end)
-
-    field_bindings =
-      fields
-      |> Enum.map_join("\n", fn field ->
-        "            #{field.name}: root.#{field.name};"
-      end)
+      |> Enum.sort()
+      |> Enum.join("\n")
 
     """
     // generated by mix projection.codegen; do not edit manually
     import { AppShell } from "../../../../lib/projection_ui/ui/app_shell.slint";
     import { ScreenHost } from "screen_host.slint";
+    #{state_export_lines}
+    export { ErrorState } from "error_state.slint";
 
     export component AppWindow inherits Window {
         in property <int> vm_rev: 0;
         in property <string> app_title: "Projection Demo";
         in property <string> active_screen: "clock";
         in property <bool> nav_can_back: false;
-    #{property_lines}
 
         callback ui_intent(intent_name: string, intent_arg: string);
         callback navigate(route_name: string, params_json: string);
@@ -1196,7 +1272,6 @@ defmodule Mix.Tasks.Projection.Codegen do
             ScreenHost {
                 vm_rev: root.vm_rev;
                 active_screen: root.active_screen;
-    #{field_bindings}
                 ui_intent(intent_name, intent_arg) => { root.ui_intent(intent_name, intent_arg); }
                 navigate(route_name, params_json) => { root.navigate(route_name, params_json); }
             }
@@ -1205,7 +1280,7 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
   end
 
-  defp error_screen_fields do
+  defp error_state_fields do
     [
       %{name: :error_title, type: :string, default: "Rendering Error"},
       %{name: :error_message, type: :string, default: ""},

@@ -2,6 +2,7 @@ use crate::AppWindow;
 use crate::generated::{self, ScreenId};
 use crate::protocol::PatchOp;
 use serde_json::Value;
+use slint::ComponentHandle;
 
 #[derive(Debug, Clone)]
 pub struct UiModelState {
@@ -105,19 +106,20 @@ fn apply_global_props(ui: &AppWindow, vm: &Value) {
         .pointer("/screen/vm/title")
         .and_then(Value::as_str)
         .unwrap_or("");
-    ui.set_error_title(error_title.into());
+    let error_state = ui.global::<crate::ErrorState>();
+    error_state.set_error_title(error_title.into());
 
     let error_message = vm
         .pointer("/screen/vm/message")
         .and_then(Value::as_str)
         .unwrap_or("");
-    ui.set_error_message(error_message.into());
+    error_state.set_error_message(error_message.into());
 
     let error_screen_module = vm
         .pointer("/screen/vm/screen_module")
         .and_then(Value::as_str)
         .unwrap_or("");
-    ui.set_error_screen_module(error_screen_module.into());
+    error_state.set_error_screen_module(error_screen_module.into());
 }
 
 fn patch_changes_screen(ops: &[PatchOp]) -> bool {
