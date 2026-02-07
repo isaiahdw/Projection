@@ -22,6 +22,7 @@ defmodule ProjectionUI.PortOwner do
   @typedoc "Internal state for the port owner process."
   @type state :: %{
           session: GenServer.server(),
+          sid: String.t(),
           port: port() | nil,
           command: String.t() | nil,
           args: [String.t()],
@@ -60,6 +61,7 @@ defmodule ProjectionUI.PortOwner do
 
     state = %{
       session: Keyword.fetch!(opts, :session),
+      sid: normalize_sid(Keyword.get(opts, :sid, "S1")),
       port: nil,
       command: Keyword.get(opts, :command),
       args: Keyword.get(opts, :args, []),
@@ -85,12 +87,13 @@ defmodule ProjectionUI.PortOwner do
     next_state =
       case Protocol.decode_inbound(payload) do
         {:ok, envelope} ->
+          next_state = maybe_track_sid_from_envelope(envelope, state)
           Session.handle_ui_envelope(state.session, envelope)
-          state
+          next_state
 
         {:error, reason} ->
           Logger.warning("ui_host inbound decode failed: #{inspect(reason)}")
-          state
+          handle_decode_error(reason, state)
       end
 
     {:noreply, next_state}
@@ -121,13 +124,15 @@ defmodule ProjectionUI.PortOwner do
 
   def terminate(_reason, _state), do: :ok
 
-  defp dispatch_to_port(_envelope, %{port: nil} = state), do: state
+  defp dispatch_to_port(envelope, %{port: nil} = state) do
+    maybe_track_sid_from_envelope(envelope, state)
+  end
 
   defp dispatch_to_port(envelope, %{port: port} = state) do
     case Protocol.encode_outbound(envelope) do
       {:ok, payload} ->
         true = Port.command(port, payload)
-        state
+        maybe_track_sid_from_envelope(envelope, state)
 
       {:error, reason} ->
         Logger.warning("ui_host outbound encode failed: #{inspect(reason)}")
@@ -183,4 +188,34 @@ defmodule ProjectionUI.PortOwner do
       {to_charlist(key), to_charlist(value)}
     end)
   end
+
+  defp handle_decode_error(reason, state) do
+    {code, message} = decode_error_details(reason)
+
+    state = dispatch_to_port(Protocol.error_envelope(state.sid, nil, code, message), state)
+
+    Session.handle_ui_envelope(state.session, %{"t" => "ready", "sid" => state.sid})
+    state
+  end
+
+  defp decode_error_details(:frame_too_large),
+    do: {"frame_too_large", "inbound frame exceeds ui_to_elixir cap"}
+
+  defp decode_error_details(:decode_error),
+    do: {"decode_error", "malformed inbound json payload"}
+
+  defp decode_error_details(:invalid_envelope),
+    do: {"invalid_envelope", "inbound payload must decode to a json object"}
+
+  defp decode_error_details(other),
+    do: {"decode_error", "inbound decode failed: #{inspect(other)}"}
+
+  defp maybe_track_sid_from_envelope(%{"sid" => sid}, state) when is_binary(sid) and sid != "" do
+    %{state | sid: sid}
+  end
+
+  defp maybe_track_sid_from_envelope(_envelope, state), do: state
+
+  defp normalize_sid(sid) when is_binary(sid) and sid != "", do: sid
+  defp normalize_sid(_sid), do: "S1"
 end

@@ -1,0 +1,56 @@
+{
+  "caps": {
+    "ui_to_elixir": 65536,
+    "elixir_to_ui": 1048576
+  },
+  "ui_ready": {
+    "t": "ready",
+    "sid": "S1",
+    "capabilities": {
+      "m1": true,
+      "transport": "stdio-packet-4"
+    }
+  },
+  "ui_intent": {
+    "t": "intent",
+    "sid": "S1",
+    "id": 7,
+    "name": "ui.route.navigate",
+    "payload": {
+      "to": "devices",
+      "params": {}
+    }
+  },
+  "elixir_render": {
+    "t": "render",
+    "sid": "S1",
+    "rev": 1,
+    "vm": {
+      "clock_text": "10:42:17"
+    }
+  },
+  "elixir_patch": {
+    "t": "patch",
+    "sid": "S1",
+    "rev": 2,
+    "ack": 7,
+    "ops": [
+      {
+        "op": "replace",
+        "path": "/clock_text",
+        "value": "10:42:18"
+      }
+    ]
+  },
+  "elixir_error": {
+    "t": "error",
+    "sid": "S1",
+    "rev": 2,
+    "code": "decode_error",
+    "message": "malformed inbound json"
+  },
+  "frame_sample": {
+    "payload_ascii": "abc",
+    "frame_hex": "00000003616263"
+  }
+}
