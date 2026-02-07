@@ -94,7 +94,7 @@ defmodule Projection.Session do
       }
       |> sync_subscriptions()
 
-    {:ok, %{state | vm: render_vm(state)}}
+    {:ok, %{state | vm: initial_vm(state)}}
   end
 
   @impl true
@@ -276,14 +276,7 @@ defmodule Projection.Session do
   defp ensure_stable_sid(existing_sid, _incoming_sid), do: existing_sid
 
   defp mount_screen!(screen_module, params, session) do
-    initial_assigns =
-      if function_exported?(screen_module, :schema, 0) do
-        screen_module.schema()
-      else
-        %{}
-      end
-
-    initial_state = State.new(initial_assigns)
+    initial_state = State.new(screen_module.schema())
 
     if function_exported?(screen_module, :mount, 3) do
       case screen_module.mount(params, session, initial_state) do
@@ -352,34 +345,74 @@ defmodule Projection.Session do
     end
   end
 
-  defp render_vm(%{router: nil, screen_module: screen_module, screen_state: screen_state}) do
-    render_screen(screen_module, screen_state.assigns)
+  defp initial_vm(state) do
+    {_status, vm} = render_vm_with_status(state)
+    vm
   end
 
-  defp render_vm(state) do
+  defp render_vm_with_status(%{router: nil} = state) do
+    case safe_render_screen(state.screen_module, state.screen_state.assigns) do
+      {:ok, vm} ->
+        {:ok, vm}
+
+      {:error, error_vm} ->
+        {:error, render_error_vm(state, error_vm)}
+    end
+  end
+
+  defp render_vm_with_status(state) do
     current = state.router.current(state.nav)
 
-    %{
-      app: %{title: state.app_title},
-      nav: state.router.to_vm(state.nav),
-      screen: %{
-        name: current.name,
-        action: current.action,
-        vm: render_screen(state.screen_module, state.screen_state.assigns)
-      }
-    }
+    case safe_render_screen(state.screen_module, state.screen_state.assigns) do
+      {:ok, screen_vm} ->
+        {:ok,
+         %{
+           app: %{title: state.app_title},
+           nav: state.router.to_vm(state.nav),
+           screen: %{
+             name: current.name,
+             action: current.action,
+             vm: screen_vm
+           }
+         }}
+
+      {:error, error_vm} ->
+        {:error, render_error_vm(state, error_vm)}
+    end
+  end
+
+  defp safe_render_screen(screen_module, assigns) when is_map(assigns) do
+    try do
+      vm = render_screen(screen_module, assigns)
+
+      if is_map(vm) do
+        {:ok, vm}
+      else
+        raise "render/1 must return a map, got: #{inspect(vm)}"
+      end
+    rescue
+      exception ->
+        stacktrace = __STACKTRACE__
+
+        Logger.error(
+          "screen render failed for #{inspect(screen_module)}\n" <>
+            Exception.format(:error, exception, stacktrace)
+        )
+
+        {:error,
+         %{
+           title: "Rendering Error",
+           message: Exception.message(exception),
+           screen_module: inspect(screen_module)
+         }}
+    end
   end
 
   defp render_screen(screen_module, assigns) when is_map(assigns) do
     if function_exported?(screen_module, :render, 1) do
       screen_module.render(assigns)
     else
-      defaults =
-        if function_exported?(screen_module, :schema, 0) do
-          screen_module.schema()
-        else
-          %{}
-        end
+      defaults = screen_module.schema()
 
       if map_size(defaults) == 0 do
         assigns
@@ -390,11 +423,35 @@ defmodule Projection.Session do
     end
   end
 
+  defp render_error_vm(state, error_vm) do
+    nav_vm =
+      if state.router && state.nav do
+        state.router.to_vm(state.nav)
+      else
+        %{stack: []}
+      end
+
+    %{
+      app: %{title: state.app_title},
+      nav: nav_vm,
+      screen: %{
+        name: "error",
+        action: "render_error",
+        vm: error_vm
+      }
+    }
+  end
+
   defp apply_screen_update(state, %State{} = screen_state, ack) do
     changed_fields = State.changed_fields(screen_state)
     next_state = %{state | screen_state: State.clear_changed(screen_state)}
-    next_vm = render_vm(next_state)
-    ops = vm_patch_ops(state.vm, next_vm, changed_fields, next_state.router)
+    {render_status, next_vm} = render_vm_with_status(next_state)
+
+    ops =
+      case render_status do
+        :ok -> vm_patch_ops(state.vm, next_vm, changed_fields, next_state.router)
+        :error -> vm_patch_ops(state.vm, next_vm)
+      end
 
     next_state = %{next_state | vm: next_vm}
 

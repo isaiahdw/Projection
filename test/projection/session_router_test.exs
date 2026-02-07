@@ -3,6 +3,28 @@ defmodule Projection.SessionRouterTest do
 
   alias Projection.Session
 
+  defmodule FailingRenderScreen do
+    use ProjectionUI, :screen
+
+    schema do
+      field(:value, :string, default: "ok")
+    end
+
+    @impl true
+    def render(_assigns) do
+      raise "boom from render"
+    end
+  end
+
+  defmodule FallbackRouter do
+    use Projection.Router.DSL
+
+    screen_session :main do
+      screen("/broken", FailingRenderScreen, :show, as: :broken)
+      screen("/clock", ProjectionUI.Screens.Clock, :show, as: :clock)
+    end
+  end
+
   test "routed mode renders nav and screen VM and supports navigate/back intents" do
     {:ok, session} =
       start_supervised(
@@ -243,5 +265,46 @@ defmodule Projection.SessionRouterTest do
 
     assert_receive {:subscription, :unsubscribe, "clock.timezone:UTC"}, 200
     assert_receive {:subscription, :subscribe, "clock.timezone:America/Chicago"}, 200
+  end
+
+  test "render errors are surfaced as error screen vm and session stays alive" do
+    {:ok, session} =
+      start_supervised(
+        {Session,
+         [
+           sid: "S1",
+           router: FallbackRouter,
+           route: "broken",
+           port_owner: self()
+         ]}
+      )
+
+    assert {:ok, [render]} =
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
+
+    assert render["vm"][:screen][:name] == "error"
+    assert render["vm"][:screen][:vm][:title] == "Rendering Error"
+    assert render["vm"][:screen][:vm][:message] == "boom from render"
+
+    assert render["vm"][:screen][:vm][:screen_module] ==
+             "Projection.SessionRouterTest.FailingRenderScreen"
+
+    assert Process.alive?(session)
+
+    assert {:ok, []} =
+             Session.handle_ui_envelope_sync(session, %{
+               "t" => "intent",
+               "sid" => "S1",
+               "id" => 99,
+               "name" => "ui.route.navigate",
+               "payload" => %{"to" => "clock", "params" => %{}}
+             })
+
+    assert_receive {:"$gen_cast", {:send_envelope, patch}}, 200
+    assert patch["t"] == "patch"
+    assert patch["ack"] == 99
+
+    snapshot = Session.snapshot(session)
+    assert snapshot.vm.screen.name == "clock"
   end
 end

@@ -1,0 +1,27 @@
+export component ErrorScreen inherits VerticalLayout {
+    in property <int> vm_rev: 0;
+    pure callback vm_text(path: string, rev: int) -> string;
+
+    spacing: 8px;
+
+    Text {
+        text: "Screen Error";
+        font-size: 18px;
+    }
+
+    Text {
+        text: root.vm_text("/screen/vm/title", root.vm_rev);
+        font-size: 14px;
+    }
+
+    Text {
+        text: root.vm_text("/screen/vm/message", root.vm_rev);
+        wrap: word-wrap;
+        font-size: 14px;
+    }
+
+    Text {
+        text: "Module: " + root.vm_text("/screen/vm/screen_module", root.vm_rev);
+        font-size: 12px;
+    }
+}

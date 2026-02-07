@@ -1,6 +1,7 @@
 import { AppShell } from "layouts/app_shell.slint";
 import { ClockScreen } from "templates/clock.slint";
 import { DevicesScreen } from "templates/devices.slint";
+import { ErrorScreen } from "templates/error.slint";
 import { Routes } from "../../../slint/ui_host/src/generated/routes.slint";
 
 export component AppWindow inherits Window {
@@ -93,6 +94,11 @@ export component AppWindow inherits Window {
                 vm_list_row_text(path, index, field, rev) => {
                     root.vm_list_row_text(path, index, field, rev);
                 }
+            }
+
+            if root.active_screen == "error": ErrorScreen {
+                vm_rev: root.vm_rev;
+                vm_text(path, rev) => { root.vm_text(path, rev); }
             }
         }
     }
