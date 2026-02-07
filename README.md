@@ -105,6 +105,7 @@ Generated Elixir helpers include:
 ## Screen Model
 
 Screen modules use `use ProjectionUI, :screen`.
+All screens must declare `schema do ... end` (it can be empty, but it must exist).
 
 Lifecycle callbacks are optional and have defaults:
 
@@ -120,6 +121,7 @@ State model:
 - `state`: mutable `ProjectionUI.State` (assigns map).
 - `session`: immutable per-session context.
 - `params`: route/navigation parameters.
+- if a screen `render/1` raises, Projection falls back to a built-in `"error"` screen VM instead of crashing the UI session loop.
 
 ## Schema DSL
 
@@ -137,13 +139,14 @@ end
 ```
 
 Supported scalar types are `:string`, `:bool`, `:integer`, and `:float`.
+Container types are also supported: `:map` and `:list`.
 
 ## Binding Modes
 
-- Typed scalar bindings: declare fields in `schema`, codegen emits Rust setters/patch dispatch.
-- Dynamic VM lookups: use `vm_text` / `vm_list_*` callbacks for richer structures (for example list tables) until typed `id_table` support lands.
+- Typed scalar bindings: schema fields of `:string | :bool | :integer | :float` are codegen-bound to Slint properties.
+- Container schema fields: schema fields of `:map | :list` are part of the VM contract and read through `vm_text` / `vm_list_*` callbacks.
 
-This split is intentional for now: scalar contract is strict; collection-heavy UIs still use generic path lookups.
+There are no schemaless screens. Every screen defines a schema contract, even when a screen currently relies on container data and VM lookup callbacks.
 
 ## UI Intent Conventions
 
