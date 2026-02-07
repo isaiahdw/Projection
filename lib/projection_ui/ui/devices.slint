@@ -1,7 +1,9 @@
 export component DevicesScreen inherits VerticalLayout {
     in property <int> vm_rev: 0;
-    pure callback vm_list_indices(path: string, rev: int) -> [int];
-    pure callback vm_list_row_text(path: string, index: int, field: string, rev: int) -> string;
+    in property <[string]> devices_ids: [];
+    in property <[string]> devices_name: [];
+    in property <[string]> devices_status: [];
+    callback intent(intent_name: string, intent_arg: string);
 
     spacing: 8px;
 
@@ -26,7 +28,7 @@ export component DevicesScreen inherits VerticalLayout {
         VerticalLayout {
             spacing: 2px;
 
-            for i in root.vm_list_indices("/screen/vm/devices", root.vm_rev): Rectangle {
+            for name[index] in root.devices_name: Rectangle {
                 height: 36px;
                 border-radius: 4px;
                 background: row_touch.has-hover ? #2a2a4a : transparent;
@@ -37,7 +39,7 @@ export component DevicesScreen inherits VerticalLayout {
 
                     // Device name
                     Text {
-                        text: root.vm_list_row_text("/screen/vm/devices", i, "name", root.vm_rev);
+                        text: name;
                         font-size: 13px;
                         color: #e0e0f0;
                         vertical-alignment: center;
@@ -52,7 +54,7 @@ export component DevicesScreen inherits VerticalLayout {
                         background: #1a3a2a;
 
                         status_label := Text {
-                            text: root.vm_list_row_text("/screen/vm/devices", i, "status_text", root.vm_rev);
+                            text: root.devices_status[index];
                             font-size: 11px;
                             color: #66cc88;
                             horizontal-alignment: center;

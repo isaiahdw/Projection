@@ -7,6 +7,19 @@ defmodule ProjectionUI.SessionSupervisor do
 
   use Supervisor
 
+  @doc """
+  Starts the supervisor with a `Projection.Session` and `ProjectionUI.PortOwner`
+  child pair.
+
+  Accepts all options supported by `Projection.Session.start_link/1` and
+  `ProjectionUI.PortOwner.start_link/1`, plus:
+
+    * `:name` — supervisor name
+    * `:session_name` — registered name for the session (default: `Projection.Session`)
+    * `:port_owner_name` — registered name for the port owner (default: `ProjectionUI.PortOwner`)
+    * `:command` — path to the UI host executable
+
+  """
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
     Supervisor.start_link(__MODULE__, opts, name: Keyword.get(opts, :name))

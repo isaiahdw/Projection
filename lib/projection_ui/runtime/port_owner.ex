@@ -19,6 +19,7 @@ defmodule ProjectionUI.PortOwner do
 
   @backoff_steps_ms [100, 200, 500, 1_000, 2_000, 5_000]
 
+  @typedoc "Internal state for the port owner process."
   @type state :: %{
           session: GenServer.server(),
           port: port() | nil,
@@ -29,11 +30,25 @@ defmodule ProjectionUI.PortOwner do
           reconnect_idx: non_neg_integer()
         }
 
+  @doc """
+  Starts the port owner linked to the caller.
+
+  ## Options
+
+    * `:name` — registered process name
+    * `:session` — (required) name or pid of the `Projection.Session` to forward envelopes to
+    * `:command` — path to the UI host executable (nil keeps the port disconnected)
+    * `:args` — command-line arguments for the host binary
+    * `:env` — list of `{key, value}` environment variable tuples
+    * `:cd` — working directory for the host process
+
+  """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name))
   end
 
+  @doc "Sends an outbound envelope to the UI host port. Silently drops if the port is down."
   @spec send_envelope(GenServer.server(), map()) :: :ok
   def send_envelope(server, envelope) when is_map(envelope) do
     GenServer.cast(server, {:send_envelope, envelope})

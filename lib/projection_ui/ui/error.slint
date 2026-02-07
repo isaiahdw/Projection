@@ -1,6 +1,9 @@
 export component ErrorScreen inherits VerticalLayout {
     in property <int> vm_rev: 0;
-    pure callback vm_text(path: string, rev: int) -> string;
+    in property <string> title: "Rendering Error";
+    in property <string> message: "";
+    in property <string> screen_module: "";
+    callback intent(intent_name: string, intent_arg: string);
 
     spacing: 12px;
     padding: 8px;
@@ -26,7 +29,7 @@ export component ErrorScreen inherits VerticalLayout {
         }
 
         Text {
-            text: root.vm_text("/screen/vm/title", root.vm_rev);
+            text: root.title;
             font-size: 16px;
             font-weight: 600;
             color: #cc4444;
@@ -43,7 +46,7 @@ export component ErrorScreen inherits VerticalLayout {
             padding: 12px;
 
             Text {
-                text: root.vm_text("/screen/vm/message", root.vm_rev);
+                text: root.message;
                 wrap: word-wrap;
                 font-size: 13px;
                 color: #c0c0d0;
@@ -53,7 +56,7 @@ export component ErrorScreen inherits VerticalLayout {
 
     // Module info
     Text {
-        text: "Module: " + root.vm_text("/screen/vm/screen_module", root.vm_rev);
+        text: "Module: " + root.screen_module;
         font-size: 11px;
         color: #666688;
     }
