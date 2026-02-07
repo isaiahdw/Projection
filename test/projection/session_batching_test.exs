@@ -9,7 +9,7 @@ defmodule Projection.SessionBatchingTest do
         {Session,
          [
            sid: "S1",
-           port_owner: self(),
+           host_bridge: self(),
            batch_window_ms: 80,
            max_pending_ops: 64
          ]}
@@ -52,7 +52,7 @@ defmodule Projection.SessionBatchingTest do
         {Session,
          [
            sid: "S1",
-           port_owner: self(),
+           host_bridge: self(),
            batch_window_ms: 250,
            max_pending_ops: 1
          ]}
@@ -94,7 +94,7 @@ defmodule Projection.SessionBatchingTest do
         {Session,
          [
            sid: "S1",
-           port_owner: self(),
+           host_bridge: self(),
            batch_window_ms: 120,
            max_pending_ops: 64
          ]}

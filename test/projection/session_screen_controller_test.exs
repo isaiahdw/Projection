@@ -65,7 +65,7 @@ defmodule Projection.SessionScreenControllerTest do
          [
            sid: "S1",
            screen_module: ThermostatScreen,
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -100,7 +100,7 @@ defmodule Projection.SessionScreenControllerTest do
            sid: "S1",
            screen_module: ThermostatScreen,
            screen_session: %{"base_temperature" => 72},
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -117,7 +117,7 @@ defmodule Projection.SessionScreenControllerTest do
          [
            sid: "S1",
            screen_module: LegacyScreen,
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 

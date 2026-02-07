@@ -48,7 +48,7 @@ defmodule Projection.M3ListPatchTest do
          [
            sid: "S1",
            screen_module: DevicesScreen,
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 

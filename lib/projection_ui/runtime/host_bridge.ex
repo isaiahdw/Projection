@@ -1,4 +1,4 @@
-defmodule ProjectionUI.PortOwner do
+defmodule ProjectionUI.HostBridge do
   @moduledoc """
   Owns the external UI host port process and forwards envelopes between
   the host and `Projection.Session`.
@@ -141,7 +141,7 @@ defmodule ProjectionUI.PortOwner do
   end
 
   defp maybe_connect(%{command: nil} = state) do
-    Logger.debug("ProjectionUI.PortOwner started without :command; port remains disconnected")
+    Logger.debug("ProjectionUI.HostBridge started without :command; port remains disconnected")
     state
   end
 

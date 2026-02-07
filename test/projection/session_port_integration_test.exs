@@ -9,7 +9,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -52,7 +52,7 @@ defmodule Projection.SessionPortIntegrationTest do
            sid: "S1",
            screen_params: %{"clock_text" => "10:42:17"},
            tick_ms: 5_000,
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -82,7 +82,7 @@ defmodule Projection.SessionPortIntegrationTest do
            sid: "S1",
            screen_params: %{"clock_text" => "10:42:17"},
            tick_ms: 5_000,
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -147,7 +147,7 @@ defmodule Projection.SessionPortIntegrationTest do
            sid: "S1",
            screen_params: %{"clock_text" => "10:42:17"},
            tick_ms: 5_000,
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -186,7 +186,7 @@ defmodule Projection.SessionPortIntegrationTest do
            sid: "S1",
            screen_params: %{"clock_text" => "10:42:17"},
            tick_ms: 5_000,
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -219,7 +219,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -253,7 +253,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -312,7 +312,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -351,7 +351,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -375,7 +375,7 @@ defmodule Projection.SessionPortIntegrationTest do
          [
            sid: "S1",
            screen_module: ProjectionUI.Screens.Devices,
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 

@@ -18,7 +18,7 @@ defmodule Projection.Session do
   alias Projection.Patch
   alias Projection.Protocol
   alias Projection.Router
-  alias ProjectionUI.PortOwner
+  alias ProjectionUI.HostBridge
   alias ProjectionUI.State
 
   @typedoc "Internal GenServer state for a running session."
@@ -33,7 +33,7 @@ defmodule Projection.Session do
           patch_flush_ref: {reference(), reference()} | nil,
           tick_ms: pos_integer() | nil,
           tick_ref: reference() | nil,
-          port_owner: GenServer.server() | nil,
+          host_bridge: GenServer.server() | nil,
           router: module() | nil,
           nav: Router.nav() | nil,
           app_title: String.t(),
@@ -60,7 +60,7 @@ defmodule Projection.Session do
     * `:batch_window_ms` — patch batch flush window in milliseconds (default `16`)
     * `:max_pending_ops` — max coalesced ops kept before immediate flush (default `128`)
     * `:tick_ms` — interval for `:tick` messages (nil disables)
-    * `:port_owner` — name or pid of the `ProjectionUI.PortOwner` for outbound envelopes
+    * `:host_bridge` — name or pid of the `ProjectionUI.HostBridge` for outbound envelopes
     * `:subscription_hook` — `(action, topic -> any())` callback for pub/sub
 
   """
@@ -72,7 +72,7 @@ defmodule Projection.Session do
   @doc """
   Sends a UI envelope to the session asynchronously.
 
-  This is the primary entry point used by `ProjectionUI.PortOwner` to forward
+  This is the primary entry point used by `ProjectionUI.HostBridge` to forward
   `ready` and `intent` envelopes from the host. Outbound responses (renders,
   patches) are dispatched back through the port owner.
   """
@@ -119,7 +119,7 @@ defmodule Projection.Session do
         patch_flush_ref: nil,
         tick_ms: normalize_tick_ms(Keyword.get(opts, :tick_ms)),
         tick_ref: nil,
-        port_owner: Keyword.get(opts, :port_owner),
+        host_bridge: Keyword.get(opts, :host_bridge, Keyword.get(opts, :port_owner)),
         router: router,
         nav: nav,
         app_title: app_title,
@@ -723,12 +723,12 @@ defmodule Projection.Session do
   defp normalize_app_title(title) when is_binary(title) and title != "", do: title
   defp normalize_app_title(_title), do: "Projection Demo"
 
-  defp dispatch_outbound(%{port_owner: nil} = state, _envelopes), do: state
+  defp dispatch_outbound(%{host_bridge: nil} = state, _envelopes), do: state
 
-  defp dispatch_outbound(%{port_owner: port_owner} = state, envelopes) do
-    if GenServer.whereis(port_owner) do
+  defp dispatch_outbound(%{host_bridge: host_bridge} = state, envelopes) do
+    if GenServer.whereis(host_bridge) do
       Enum.each(envelopes, fn envelope ->
-        PortOwner.send_envelope(port_owner, envelope)
+        HostBridge.send_envelope(host_bridge, envelope)
       end)
     end
 

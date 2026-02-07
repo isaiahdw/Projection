@@ -50,9 +50,9 @@ There are two event loops that never block each other.
 
 **The host binary.** The Rust side is infrastructure you don't touch. It's a small binary that runs Slint's event loop on the main thread: a reader thread pulls length-prefixed JSON frames from stdin (the OTP port), and a writer thread pushes intent envelopes to stdout. All Slint mutations happen on the UI thread via `upgrade_in_event_loop`. The host keeps a shadow copy of the full VM JSON so it can apply incremental patches without needing the full tree each time. The code is either static plumbing (protocol framing, thread wiring, patch application) or auto-generated from your Elixir schemas by `mix projection.codegen`. You never edit it directly.
 
-**The bridge.** `ProjectionUI.PortOwner` is a GenServer that owns the OS port process. It decodes inbound envelopes and casts them to the Session, and encodes outbound envelopes to the port. If the port crashes, it reconnects with bounded exponential backoff. On reconnect, the host sends `ready` and the session replies with a full `render` -- the host doesn't need to persist anything.
+**The bridge.** `ProjectionUI.HostBridge` is a GenServer that owns the OS port process. It decodes inbound envelopes and casts them to the Session, and encodes outbound envelopes to the port. If the port crashes, it reconnects with bounded exponential backoff. On reconnect, the host sends `ready` and the session replies with a full `render` -- the host doesn't need to persist anything.
 
-Both processes live under a `SessionSupervisor` with `:rest_for_one` strategy: if the Session crashes, the PortOwner restarts too. If the PortOwner crashes, the Session keeps its state and just re-renders when the new host connects.
+Both processes live under a `SessionSupervisor` with `:rest_for_one` strategy: if the Session crashes, the HostBridge restarts too. If the HostBridge crashes, the Session keeps its state and just re-renders when the new host connects.
 
 ### Protocol
 

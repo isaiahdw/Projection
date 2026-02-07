@@ -1,6 +1,6 @@
 defmodule ProjectionUI.SessionSupervisor do
   @moduledoc """
-  Supervises one authoritative `Projection.Session` and its `ProjectionUI.PortOwner`.
+  Supervises one authoritative `Projection.Session` and its `ProjectionUI.HostBridge`.
 
   Strategy is `:rest_for_one` to ensure port restarts follow session restarts.
   """
@@ -8,15 +8,15 @@ defmodule ProjectionUI.SessionSupervisor do
   use Supervisor
 
   @doc """
-  Starts the supervisor with a `Projection.Session` and `ProjectionUI.PortOwner`
+  Starts the supervisor with a `Projection.Session` and `ProjectionUI.HostBridge`
   child pair.
 
   Accepts all options supported by `Projection.Session.start_link/1` and
-  `ProjectionUI.PortOwner.start_link/1`, plus:
+  `ProjectionUI.HostBridge.start_link/1`, plus:
 
     * `:name` — supervisor name
     * `:session_name` — registered name for the session (default: `Projection.Session`)
-    * `:port_owner_name` — registered name for the port owner (default: `ProjectionUI.PortOwner`)
+    * `:host_bridge_name` — registered name for the bridge (default: `ProjectionUI.HostBridge`)
     * `:command` — path to the UI host executable
 
   """
@@ -28,7 +28,14 @@ defmodule ProjectionUI.SessionSupervisor do
   @impl true
   def init(opts) do
     session_name = Keyword.get(opts, :session_name, Projection.Session)
-    port_owner_name = Keyword.get(opts, :port_owner_name, ProjectionUI.PortOwner)
+
+    host_bridge_name =
+      Keyword.get(
+        opts,
+        :host_bridge_name,
+        Keyword.get(opts, :port_owner_name, ProjectionUI.HostBridge)
+      )
+
     router = Keyword.get(opts, :router)
     route = Keyword.get(opts, :route)
     screen_module = Keyword.get(opts, :screen_module)
@@ -41,7 +48,7 @@ defmodule ProjectionUI.SessionSupervisor do
         name: session_name,
         sid: Keyword.get(opts, :sid),
         tick_ms: Keyword.get(opts, :tick_ms),
-        port_owner: port_owner_name
+        host_bridge: host_bridge_name
       ]
       |> maybe_put(:router, router)
       |> maybe_put(:route, route)
@@ -52,10 +59,11 @@ defmodule ProjectionUI.SessionSupervisor do
 
     children = [
       {Projection.Session, session_opts},
-      {ProjectionUI.PortOwner,
+      {ProjectionUI.HostBridge,
        [
-         name: port_owner_name,
+         name: host_bridge_name,
          session: session_name,
+         sid: Keyword.get(opts, :sid, "S1"),
          command: Keyword.get(opts, :command),
          args: Keyword.get(opts, :args, []),
          env: Keyword.get(opts, :env, []),

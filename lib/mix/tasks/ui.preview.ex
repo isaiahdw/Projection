@@ -48,7 +48,7 @@ defmodule Mix.Tasks.Ui.Preview do
       Projection.start_session(
         name: Projection.PreviewSupervisor,
         session_name: Projection.PreviewSession,
-        port_owner_name: Projection.PreviewPortOwner,
+        host_bridge_name: Projection.PreviewHostBridge,
         sid: sid,
         router: Projection.Router,
         route: route,

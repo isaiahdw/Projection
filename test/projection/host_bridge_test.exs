@@ -1,7 +1,7 @@
-defmodule Projection.PortOwnerTest do
+defmodule Projection.HostBridgeTest do
   use ExUnit.Case, async: true
 
-  alias ProjectionUI.PortOwner
+  alias ProjectionUI.HostBridge
 
   defmodule SessionStub do
     use GenServer
@@ -25,7 +25,7 @@ defmodule Projection.PortOwnerTest do
 
     {:ok, owner} =
       start_supervised(
-        {PortOwner,
+        {HostBridge,
          [
            session: session,
            sid: "S1",

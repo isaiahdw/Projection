@@ -34,7 +34,7 @@ defmodule Projection.SessionRouterTest do
            router: Projection.Router,
            route: "clock",
            screen_params: %{"clock_text" => "10:42:17"},
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -95,7 +95,7 @@ defmodule Projection.SessionRouterTest do
            router: Projection.Router,
            route: "clock",
            screen_params: %{"clock_text" => "10:42:17"},
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -132,7 +132,7 @@ defmodule Projection.SessionRouterTest do
            sid: "S1",
            router: Projection.Router,
            route: "clock",
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -162,7 +162,7 @@ defmodule Projection.SessionRouterTest do
            sid: "S1",
            router: Projection.Router,
            route: "clock",
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -199,7 +199,7 @@ defmodule Projection.SessionRouterTest do
            route: "clock",
            screen_params: %{"clock_timezone" => "UTC"},
            subscription_hook: subscription_hook,
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -246,7 +246,7 @@ defmodule Projection.SessionRouterTest do
            route: "clock",
            screen_params: %{"clock_timezone" => "UTC"},
            subscription_hook: subscription_hook,
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
@@ -276,7 +276,7 @@ defmodule Projection.SessionRouterTest do
            sid: "S1",
            router: FallbackRouter,
            route: "broken",
-           port_owner: self()
+           host_bridge: self()
          ]}
       )
 
