@@ -1,0 +1,46 @@
+export component AppShell inherits Rectangle {
+    in property <string> app_title: "Projection Demo";
+    in property <bool> show_back: false;
+
+    callback nav_back();
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 10px;
+
+        HorizontalLayout {
+            spacing: 10px;
+
+            if root.show_back: Rectangle {
+                width: 72px;
+                height: 28px;
+                border-width: 1px;
+                border-color: #808080;
+
+                Text {
+                    text: "Back";
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+
+                TouchArea {
+                    clicked => { root.nav_back(); }
+                }
+            }
+
+            Text {
+                text: root.app_title;
+                font-size: 20px;
+                vertical-alignment: center;
+            }
+        }
+
+        Rectangle {
+            border-width: 1px;
+            border-color: #808080;
+            height: 1px;
+        }
+
+        @children
+    }
+}

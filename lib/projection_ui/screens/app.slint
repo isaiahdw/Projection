@@ -1,0 +1,99 @@
+import { AppShell } from "layouts/app_shell.slint";
+import { ClockScreen } from "templates/clock.slint";
+import { DevicesScreen } from "templates/devices.slint";
+import { Routes } from "../../../slint/ui_host/src/generated/routes.slint";
+
+export component AppWindow inherits Window {
+    in property <int> vm_rev: 0;
+    in property <string> app_title: "Projection Demo";
+    in property <string> active_screen: "clock";
+    in property <bool> nav_can_back: false;
+    in property <string> clock_text: "--:--:--";
+    in property <bool> clock_running: true;
+    in property <string> clock_timezone: "UTC";
+
+    callback ui_intent(intent_name: string, intent_arg: string);
+    callback navigate(route_name: string, params_json: string);
+    pure callback vm_text(path: string, rev: int) -> string;
+    pure callback vm_list_indices(path: string, rev: int) -> [int];
+    pure callback vm_list_row_text(path: string, index: int, field: string, rev: int) -> string;
+
+    width: 480px;
+    height: 320px;
+
+    AppShell {
+        width: root.width;
+        height: root.height;
+        app_title: root.app_title;
+        show_back: root.nav_can_back;
+        nav_back => { root.ui_intent("ui.back", ""); }
+
+        VerticalLayout {
+            spacing: 8px;
+
+            HorizontalLayout {
+                spacing: 8px;
+
+                Rectangle {
+                    width: 90px;
+                    height: 28px;
+                    border-width: 1px;
+                    border-color: #808080;
+                    background: root.active_screen == Routes.clock ? #e4e4e4 : #f8f8f8;
+
+                    Text {
+                        text: "Clock";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            if (root.active_screen != Routes.clock) {
+                                root.navigate(Routes.clock, "{}");
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: 90px;
+                    height: 28px;
+                    border-width: 1px;
+                    border-color: #808080;
+                    background: root.active_screen == Routes.devices ? #e4e4e4 : #f8f8f8;
+
+                    Text {
+                        text: "Devices";
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    TouchArea {
+                        clicked => {
+                            if (root.active_screen != Routes.devices) {
+                                root.navigate(Routes.devices, "{}");
+                            }
+                        }
+                    }
+                }
+            }
+
+            if root.active_screen == Routes.clock: ClockScreen {
+                vm_rev: root.vm_rev;
+                clock_text: root.clock_text;
+                clock_running: root.clock_running;
+                clock_timezone: root.clock_timezone;
+                intent(intent_name, intent_arg) => { root.ui_intent(intent_name, intent_arg); }
+            }
+
+            if root.active_screen == Routes.devices: DevicesScreen {
+                vm_rev: root.vm_rev;
+                vm_list_indices(path, rev) => { root.vm_list_indices(path, rev); }
+                vm_list_row_text(path, index, field, rev) => {
+                    root.vm_list_row_text(path, index, field, rev);
+                }
+            }
+        }
+    }
+}

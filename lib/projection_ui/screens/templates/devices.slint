@@ -1,0 +1,18 @@
+export component DevicesScreen inherits VerticalLayout {
+    in property <int> vm_rev: 0;
+    pure callback vm_list_indices(path: string, rev: int) -> [int];
+    pure callback vm_list_row_text(path: string, index: int, field: string, rev: int) -> string;
+
+    spacing: 6px;
+
+    Text {
+        text: "Devices";
+        font-size: 16px;
+    }
+
+    for i in root.vm_list_indices("/screen/vm/devices", root.vm_rev): Text {
+        text: root.vm_list_row_text("/screen/vm/devices", i, "name", root.vm_rev)
+            + " - "
+            + root.vm_list_row_text("/screen/vm/devices", i, "status_text", root.vm_rev);
+    }
+}

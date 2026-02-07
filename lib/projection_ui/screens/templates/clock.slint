@@ -1,0 +1,71 @@
+import { ComboBox } from "std-widgets.slint";
+
+export component ClockScreen inherits VerticalLayout {
+    in property <int> vm_rev: 0;
+    in property <string> clock_text: "--:--:--";
+    in property <bool> clock_running: true;
+    in property <string> clock_timezone: "UTC";
+
+    callback intent(intent_name: string, intent_arg: string);
+
+    spacing: 8px;
+
+    Text {
+        text: "Clock: ";
+        font-size: 16px;
+    }
+
+    Text {
+        text: root.clock_text;
+        font-size: 28px;
+    }
+
+    Text {
+        text: root.clock_running ? "Running" : "Paused";
+        font-size: 14px;
+    }
+
+    HorizontalLayout {
+        spacing: 8px;
+
+        Text {
+            text: "Timezone:";
+            vertical-alignment: center;
+            font-size: 14px;
+        }
+
+        ComboBox {
+            width: 220px;
+            model: [
+                "UTC",
+                "America/New_York",
+                "America/Chicago",
+                "America/Denver",
+                "America/Los_Angeles",
+            ];
+            current-value: root.clock_timezone;
+            selected(value) => {
+                root.intent("clock.set_timezone", value);
+            }
+        }
+    }
+
+    Rectangle {
+        width: 100px;
+        height: 30px;
+        border-width: 1px;
+        border-color: #808080;
+
+        Text {
+            text: root.clock_running ? "Pause" : "Resume";
+            horizontal-alignment: center;
+            vertical-alignment: center;
+        }
+
+        TouchArea {
+            clicked => {
+                root.intent(root.clock_running ? "clock.pause" : "clock.resume", "");
+            }
+        }
+    }
+}

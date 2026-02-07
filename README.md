@@ -1,64 +1,188 @@
 # Projection
 
-Projection is a UI architecture where application state, behavior, and routing live in Elixir processes, and a Rust + Slint renderer displays a projection of that state via incremental updates (patches). No browser. No server-driven layout. Minimal, policy-free adapter.
+Projection is an Elixir-authoritative UI architecture for embedded and desktop-native apps.
 
-Status: planning, doc-first.
+Elixir owns state, behavior, routing, validation, and side effects. A Rust + Slint host renders a projection of that state and forwards user intents back to Elixir.
 
-**Docs**
-- `docs/CONTEXT.md` full architecture and protocol spec
-- `TASKS.md` milestones and execution plan
-- `docs/milestones/` milestone-specific deliverables and acceptance criteria
-- `docs/RESEARCH_NOTES.md` Slint and Elixir port reference notes
-- `docs/PREFLIGHT.md` go/no-go checklist before scaffolding
+Projection is intentionally lightweight. It targets simple, reliable UIs for embedded devices and can also run on desktop for local development/testing.
 
-**Locked Decisions**
-- Name: Projection (standalone, no LiveView naming)
-- Repo: single git repo, Mix umbrella
-- Apps: `apps/projection` (Elixir library) and `apps/projection_demo` (example app)
-- Renderer implementation dir: `slint/`
-- UI host language: Rust
-- Renderer: Slint
-- Transport: OTP Port (stdin/stdout, framed)
-- Protocol: JSON envelopes + JSON Patch (RFC6902 subset)
-- Target: RK3566-class embedded device (platform-agnostic architecture)
+It is not a full Phoenix LiveView replacement and currently omits many advanced LiveView concepts.
 
-**Non-Goals**
-- No browser, HTML, CSS, JS
-- No server-driven layouts or widget trees
-- No imperative UI commands from Elixir (open modal, scroll, animate)
-- No domain logic in Rust UI host
-- No per-keystroke round-trips (use commit semantics)
+Canonical rule:
+`Elixir owns truth. Slint renders a projection of that truth. The Rust host only bridges the two.`
 
-**Hard Constraints**
-- Firmware size, predictable performance, reliability are top priorities
-- UI contributors edit only `.slint` files + assets
-- Partial updates must be fine-grained (clock tick updates only one label)
-- Lists update single rows by stable ID
-- UI must recover cleanly on restart via `ready -> render`
+## Design Summary
 
-**Dual Event Loop Model**
-- Elixir/BEAM loop is authoritative (state, routing, validation, workflows, side effects)
-- Slint UI loop is renderer-only (input, redraw, animations, windowing)
-- Rust bridge connects them with background reader and writer threads plus a non-blocking UI thread
-- All Slint mutations happen on the Slint UI thread via `slint::invoke_from_event_loop(...)` or `Weak::upgrade_in_event_loop(...)`
+- Keep domain logic in Elixir.
+- Keep rendering/input in Slint.
+- Keep Rust policy-free.
+- Move data via `render` + incremental `patch` envelopes, not imperative UI commands.
 
-**Protocol Invariants**
-- Frames are length-prefixed JSON on stdin/stdout
-- Frame caps: `1_048_576` bytes (Elixir -> UI) and `65_536` bytes (UI -> Elixir)
-- Each message includes `sid` and monotonic `rev` (`render` and `patch`)
-- Intents include monotonic client `id`; server may echo with `ack`
-- Unknown or out-of-order revisions are rejected and force `ready -> render` resync
-- Patch scope is RFC6902 subset (`add`, `remove`, `replace`) with RFC6901 path escaping
-- UI callbacks never block on port IO; intents are queued to an outbound writer thread
+## Architecture
 
-**Runtime and Deployment Notes**
-- For Elixir ports, prefer `Port.open(..., [:binary, {:packet, 4}, :exit_status, :use_stdio])`
-- Supervision policy: per-session `SessionSupervisor` with `:rest_for_one`; `PortOwner` reconnects with bounded exponential backoff
-- Development runtime: macOS uses `SLINT_BACKEND=winit`
-- Target runtime: RK3566 Linux uses `SLINT_BACKEND=linuxkms`
-- Slint backend selection order is `qt`, then `winit`, then `linuxkms`
-- `linuxkms` is not built in by default; enable and validate it explicitly for compositor-free embedded targets
-- `SLINT_BACKEND` can force backend/renderer selection during bring-up and profiling
+There are two event loops:
 
-**Canonical Rule**
-Elixir owns truth. Slint renders a projection of that truth. The Rust host only bridges the two.
+- Elixir session loop (`Projection.Session`): authoritative state machine.
+- Slint UI loop: input, redraw, windowing.
+
+Rust bridges them:
+
+- reader/writer threads handle framed JSON on stdin/stdout.
+- UI mutations happen on the Slint UI thread.
+- UI host enforces monotonic `rev` (`render` must be newer, `patch` must be `last_rev + 1`).
+- On `sid`/`rev` mismatch, UI host requests resync with `ready`.
+
+Transport uses OTP ports with `{:packet, 4}` framing.
+
+## Project Layout
+
+- `lib/projection/`: protocol, patching, router, session runtime.
+- `lib/projection_ui/`: screen behavior/state, session supervisor, port owner.
+- `lib/projection_ui/screens/`: Slint app shell/layout/templates.
+- `slint/ui_host/`: Rust UI host, protocol bridge, generated Rust setters/dispatch.
+- `planning/`: local planning notes and milestone docs (gitignored).
+
+## Quick Start
+
+Prerequisites:
+
+- Elixir + Mix
+- Rust + Cargo
+
+Install/build/run:
+
+```bash
+mix deps.get
+mix compile
+mix ui.preview --backend winit --tick-ms 250
+```
+
+Useful commands:
+
+```bash
+mix projection.codegen
+mix test
+cargo check --manifest-path slint/ui_host/Cargo.toml
+```
+
+## Compile Pipeline
+
+`mix compile` runs custom compilers from `mix.exs`:
+
+1. `mix projection.codegen`
+2. `cargo build` for `slint/ui_host`
+3. copy UI host binary to `priv/ui_host/ui_host`
+
+## Routing DSL
+
+Routes are defined in Elixir with `screen_session` + `screen`:
+
+```elixir
+defmodule Projection.Router do
+  use Projection.Router.DSL
+
+  alias ProjectionUI.Screens.Clock
+  alias ProjectionUI.Screens.Devices
+
+  screen_session :main do
+    screen "/clock", Clock, :show
+    screen "/devices", Devices, :index
+  end
+
+  screen_session :admin do
+    screen "/admin", Clock, :index, as: :admin
+  end
+end
+```
+
+Generated Elixir helpers include:
+
+- `Projection.Router.route_name(:clock)` -> `"clock"`
+- `Projection.Router.route_path(:clock)` -> `"/clock"`
+- `Projection.Router.route_keys/0`
+- `Projection.Router.route_names/0`
+
+## Screen Model
+
+Screen modules use `use ProjectionUI, :screen`.
+
+Lifecycle callbacks are optional and have defaults:
+
+- `mount/3`
+- `handle_event/3`
+- `handle_params/2`
+- `handle_info/2`
+- `subscriptions/2`
+- `render/1`
+
+State model:
+
+- `state`: mutable `ProjectionUI.State` (assigns map).
+- `session`: immutable per-session context.
+- `params`: route/navigation parameters.
+
+## Schema DSL
+
+Define typed screen VM fields with `schema do ... end`:
+
+```elixir
+defmodule ProjectionUI.Screens.Example do
+  use ProjectionUI, :screen
+
+  schema do
+    field :title, :string, default: "Hello"
+    field :count, :integer, default: 0
+  end
+end
+```
+
+Supported scalar types are `:string`, `:bool`, `:integer`, and `:float`.
+
+## Binding Modes
+
+- Typed scalar bindings: declare fields in `schema`, codegen emits Rust setters/patch dispatch.
+- Dynamic VM lookups: use `vm_text` / `vm_list_*` callbacks for richer structures (for example list tables) until typed `id_table` support lands.
+
+This split is intentional for now: scalar contract is strict; collection-heavy UIs still use generic path lookups.
+
+## UI Intent Conventions
+
+Generic callback:
+
+- `ui_intent(intent_name, intent_arg)`
+
+Screen contract:
+
+- Handle events in `handle_event/3`; unhandled events can no-op.
+
+Routing callback:
+
+- `navigate(route_name, params_json)`
+
+Payload mapping in Rust:
+
+- empty `intent_arg` -> `%{}`
+- non-empty `intent_arg` -> `%{"arg" => "..."}`
+- `navigate(...)` -> `ui.route.navigate` with `%{"to" => route_name, "params" => parsed_json_object}`
+
+## Generated Artifacts
+
+Generated from Elixir source-of-truth (do not edit manually):
+
+- `slint/ui_host/src/generated/*.rs` from screen schema metadata
+- `slint/ui_host/src/generated/routes.slint` from router metadata
+
+`app.slint` imports the generated Slint routes global from `slint/ui_host/src/generated/routes.slint` so route names are centralized in router definitions.
+
+## Manual Smoke Test
+
+1. Run `mix ui.preview --backend winit --tick-ms 250`.
+2. Confirm window opens and clock updates.
+3. Use top nav to switch `Clock` and `Devices`.
+4. In `Clock`, change timezone and verify text updates.
+5. In `Clock`, click Pause/Resume and verify behavior.
+6. Stop Elixir and verify Slint host exits.
+
+## Planning Docs
+
+Local-only planning docs live under `planning/` and are gitignored.
