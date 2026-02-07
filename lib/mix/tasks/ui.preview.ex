@@ -13,6 +13,7 @@ defmodule Mix.Tasks.Ui.Preview do
     * `--screen-params` JSON object passed to screen `mount/3` params (default: "{}")
     * `--tick-ms` session tick interval in milliseconds (default: 1000)
     * `--backend` sets `SLINT_BACKEND` for ui_host (default: "winit")
+    * `--startup-timeout-ms` wait time for host `ready -> render` handshake (default: 5000)
   """
 
   @switches [
@@ -20,13 +21,12 @@ defmodule Mix.Tasks.Ui.Preview do
     route: :string,
     screen_params: :string,
     tick_ms: :integer,
-    backend: :string
+    backend: :string,
+    startup_timeout_ms: :integer
   ]
 
   @impl Mix.Task
   def run(args) do
-    Mix.Task.run("app.start")
-
     {opts, _argv, invalid} = OptionParser.parse(args, strict: @switches)
 
     if invalid != [] do
@@ -38,11 +38,15 @@ defmodule Mix.Tasks.Ui.Preview do
     screen_params = parse_screen_params(Keyword.get(opts, :screen_params, "{}"))
     tick_ms = Keyword.get(opts, :tick_ms, 1_000)
     backend = Keyword.get(opts, :backend, System.get_env("SLINT_BACKEND") || "winit")
+    startup_timeout_ms = Keyword.get(opts, :startup_timeout_ms, 5_000)
+
+    Mix.shell().info("Preparing preview runtime...")
+    Mix.Task.run("app.start")
 
     build_ui_host!()
     command = ui_host_executable!()
 
-    Mix.shell().info("Starting preview with sid=#{sid}, backend=#{backend}")
+    Mix.shell().info("Starting preview with sid=#{sid}, backend=#{backend}, ui_host=#{command}")
 
     {:ok, _sup} =
       Projection.start_session(
@@ -58,6 +62,12 @@ defmodule Mix.Tasks.Ui.Preview do
         env: [{"PROJECTION_SID", sid}, {"SLINT_BACKEND", backend}],
         cd: File.cwd!()
       )
+
+    wait_for_initial_render!(
+      Projection.PreviewSession,
+      Projection.PreviewHostBridge,
+      startup_timeout_ms
+    )
 
     Mix.shell().info("Preview running. Press Ctrl+C twice to exit.")
     Process.sleep(:infinity)
@@ -100,5 +110,82 @@ defmodule Mix.Tasks.Ui.Preview do
       {:error, error} ->
         Mix.raise("--screen-params must be valid JSON: #{Exception.message(error)}")
     end
+  end
+
+  defp wait_for_initial_render!(session_name, host_bridge_name, timeout_ms)
+       when is_integer(timeout_ms) and timeout_ms > 0 do
+    deadline_ms = System.monotonic_time(:millisecond) + timeout_ms
+    do_wait_for_initial_render(session_name, host_bridge_name, deadline_ms, timeout_ms)
+  end
+
+  defp wait_for_initial_render!(_session_name, _host_bridge_name, timeout_ms) do
+    Mix.raise("--startup-timeout-ms must be a positive integer, got: #{inspect(timeout_ms)}")
+  end
+
+  defp do_wait_for_initial_render(session_name, host_bridge_name, deadline_ms, timeout_ms) do
+    case safe_session_snapshot(session_name) do
+      %{rev: rev} when is_integer(rev) and rev > 0 ->
+        Mix.shell().info("UI handshake complete (session rev=#{rev}).")
+        :ok
+
+      _snapshot ->
+        if System.monotonic_time(:millisecond) >= deadline_ms do
+          Mix.raise("""
+          ui.preview timed out waiting for initial host handshake (ready -> render) after #{timeout_ms}ms.
+          Session status: #{session_debug_status(session_name)}
+          Host bridge status: #{host_bridge_debug_status(host_bridge_name)}
+          Try: `mix ui.preview --backend winit --startup-timeout-ms 15000`
+          """)
+        else
+          Process.sleep(100)
+          do_wait_for_initial_render(session_name, host_bridge_name, deadline_ms, timeout_ms)
+        end
+    end
+  end
+
+  defp safe_session_snapshot(session_name) do
+    case Process.whereis(session_name) do
+      nil ->
+        nil
+
+      _pid ->
+        Projection.Session.snapshot(session_name)
+    end
+  rescue
+    _ -> nil
+  end
+
+  defp session_debug_status(session_name) do
+    case safe_session_snapshot(session_name) do
+      nil ->
+        "not running"
+
+      %{rev: rev, sid: sid, screen_module: screen_module} ->
+        "rev=#{rev}, sid=#{inspect(sid)}, screen=#{inspect(screen_module)}"
+
+      snapshot ->
+        "running (unexpected snapshot shape: #{inspect(snapshot)})"
+    end
+  end
+
+  defp host_bridge_debug_status(host_bridge_name) do
+    case Process.whereis(host_bridge_name) do
+      nil ->
+        "not running"
+
+      _pid ->
+        case :sys.get_state(host_bridge_name) do
+          %{port: nil, command: command, reconnect_idx: reconnect_idx} ->
+            "running, port=disconnected, command=#{inspect(command)}, reconnect_idx=#{reconnect_idx}"
+
+          %{port: port, command: command} when is_port(port) ->
+            "running, port=connected, command=#{inspect(command)}"
+
+          state ->
+            "running (unexpected state shape: #{inspect(state)})"
+        end
+    end
+  rescue
+    _ -> "running (failed to inspect state)"
   end
 end
