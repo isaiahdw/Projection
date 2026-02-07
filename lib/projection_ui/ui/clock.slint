@@ -1,10 +1,19 @@
-import { ComboBox } from "std-widgets.slint";
+import { ComboBox, LineEdit } from "std-widgets.slint";
 import { Screen } from "screen.slint";
 
 export component ClockScreen inherits Screen {
     in property <string> clock_text: "--:--:--";
     in property <bool> clock_running: true;
     in property <string> clock_timezone: "UTC";
+    in property <string> clock_label: "Projection Clock";
+    in property <string> clock_label_error: "";
+    private property <string> label_draft: root.clock_label;
+    private property <string> last_submitted_label: "";
+
+    changed clock_label => {
+        root.label_draft = root.clock_label;
+        root.last_submitted_label = "";
+    }
 
     spacing: 16px;
     alignment: start;
@@ -47,6 +56,76 @@ export component ClockScreen inherits Screen {
     VerticalLayout {
         spacing: 10px;
         padding-top: 8px;
+
+        // Label commit row (draft stays local until blur/enter/save)
+        VerticalLayout {
+            spacing: 6px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: center;
+
+                Text {
+                    text: "Label";
+                    font-size: 13px;
+                    color: #8888bb;
+                    vertical-alignment: center;
+                }
+
+                label_input := LineEdit {
+                    width: 200px;
+                    text: root.label_draft;
+                    edited(next_text) => {
+                        root.label_draft = next_text;
+                    }
+                    accepted(next_text) => {
+                        root.last_submitted_label = next_text;
+                        root.intent("clock.commit_label", next_text);
+                    }
+                    changed has-focus => {
+                        if (!self.has-focus
+                                && root.label_draft != root.clock_label
+                                && root.label_draft != root.last_submitted_label) {
+                            root.last_submitted_label = root.label_draft;
+                            root.intent("clock.commit_label", root.label_draft);
+                        }
+                    }
+                }
+
+                Rectangle {
+                    width: 70px;
+                    height: 30px;
+                    border-radius: 6px;
+                    background: save_touch.pressed ? #4a4a7a : (save_touch.has-hover ? #3a3a6a : #2a2a4a);
+
+                    Text {
+                        text: "Save";
+                        font-size: 12px;
+                        font-weight: 500;
+                        color: #e0e0f0;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+
+                    save_touch := TouchArea {
+                        clicked => {
+                            if (root.label_draft != root.clock_label
+                                    && root.label_draft != root.last_submitted_label) {
+                                root.last_submitted_label = root.label_draft;
+                                root.intent("clock.commit_label", root.label_draft);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (root.clock_label_error != ""): Text {
+                text: root.clock_label_error;
+                font-size: 11px;
+                color: #cc6666;
+                horizontal-alignment: center;
+            }
+        }
 
         // Timezone row
         HorizontalLayout {

@@ -14,11 +14,14 @@ defmodule ProjectionUI.Screens.Clock do
     "America/Denver" => -7 * 60 * 60,
     "America/Los_Angeles" => -8 * 60 * 60
   }
+  @max_clock_label_length 24
 
   schema do
     field(:clock_text, :string, default: "--:--:--")
     field(:clock_running, :bool, default: true)
     field(:clock_timezone, :string, default: "UTC")
+    field(:clock_label, :string, default: "Projection Clock")
+    field(:clock_label_error, :string, default: "")
   end
 
   @spec mount(map(), map(), State.t()) :: {:ok, State.t()}
@@ -28,6 +31,7 @@ defmodule ProjectionUI.Screens.Clock do
       state
       |> maybe_assign_clock_timezone(params)
       |> maybe_assign_clock_text(params)
+      |> maybe_assign_clock_label(params)
 
     {:ok, next_state}
   end
@@ -65,6 +69,16 @@ defmodule ProjectionUI.Screens.Clock do
     end
   end
 
+  def handle_event("clock.commit_label", payload, state) when is_map(payload) do
+    case extract_clock_label(payload) do
+      {:ok, label} ->
+        {:noreply, commit_clock_label(state, label)}
+
+      :error ->
+        {:noreply, assign(state, :clock_label_error, "Label must be text.")}
+    end
+  end
+
   def handle_event(_event, _params, state) do
     {:noreply, state}
   end
@@ -76,6 +90,7 @@ defmodule ProjectionUI.Screens.Clock do
       state
       |> maybe_assign_clock_timezone(params)
       |> maybe_assign_clock_text(params)
+      |> maybe_assign_clock_label(params)
 
     {:noreply, next_state}
   end
@@ -113,6 +128,13 @@ defmodule ProjectionUI.Screens.Clock do
 
   defp maybe_assign_clock_timezone(state, _params), do: state
 
+  @spec maybe_assign_clock_label(State.t(), map()) :: State.t()
+  defp maybe_assign_clock_label(state, %{"clock_label" => label}) when is_binary(label) do
+    assign(state, :clock_label, label)
+  end
+
+  defp maybe_assign_clock_label(state, _params), do: state
+
   @spec clock_running?(State.t()) :: boolean()
   defp clock_running?(state) do
     Map.get(state.assigns, :clock_running, true)
@@ -136,6 +158,46 @@ defmodule ProjectionUI.Screens.Clock do
   end
 
   defp extract_timezone(_payload), do: :error
+
+  @spec extract_clock_label(map()) :: {:ok, String.t()} | :error
+  defp extract_clock_label(%{"label" => label}) when is_binary(label), do: {:ok, label}
+  defp extract_clock_label(%{"arg" => label}) when is_binary(label), do: {:ok, label}
+  defp extract_clock_label(_payload), do: :error
+
+  @spec commit_clock_label(State.t(), String.t()) :: State.t()
+  defp commit_clock_label(state, raw_label) when is_binary(raw_label) do
+    normalized_label = normalize_clock_label(raw_label)
+
+    cond do
+      normalized_label == "" ->
+        assign(state, :clock_label_error, "Label cannot be empty.")
+
+      String.length(normalized_label) > @max_clock_label_length ->
+        truncated_label =
+          normalized_label
+          |> String.slice(0, @max_clock_label_length)
+          |> String.trim_trailing()
+
+        state
+        |> assign(:clock_label, truncated_label)
+        |> assign(
+          :clock_label_error,
+          "Label was truncated to #{@max_clock_label_length} characters."
+        )
+
+      true ->
+        state
+        |> assign(:clock_label, normalized_label)
+        |> assign(:clock_label_error, "")
+    end
+  end
+
+  @spec normalize_clock_label(String.t()) :: String.t()
+  defp normalize_clock_label(raw_label) when is_binary(raw_label) do
+    raw_label
+    |> String.trim()
+    |> String.replace(~r/\s+/, " ")
+  end
 
   @spec current_clock_text(String.t()) :: String.t()
   defp current_clock_text(timezone) do
