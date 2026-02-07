@@ -4,6 +4,8 @@ Elixir-authoritative UI for native and embedded apps, rendered by Slint.
 
 > Elixir owns truth. Slint renders a projection of that truth. Rust only bridges the two.
 
+> Note: This project is mostly AI-generated and is not yet designed, hardened, or tested for production systems.
+
 Projection is a UI architecture where all state, routing, validation, and side effects live in Elixir. A Rust + Slint host renders the current view and forwards user intents back. No browser, no HTML, no JavaScript. Communication happens over an OTP port using JSON envelopes and incremental JSON Patch updates.
 
 ## Why
