@@ -1,4 +1,8 @@
 defmodule Mix.Tasks.Compile.ProjectionCodegen do
+  @moduledoc """
+  Compiler task that runs `mix projection.codegen` as part of `mix compile`.
+  """
+
   use Mix.Task.Compiler
 
   @recursive true

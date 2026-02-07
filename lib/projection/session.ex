@@ -21,6 +21,7 @@ defmodule Projection.Session do
   alias ProjectionUI.PortOwner
   alias ProjectionUI.State
 
+  @typedoc "Internal GenServer state for a running session."
   @type state :: %{
           sid: String.t() | nil,
           rev: non_neg_integer(),
@@ -39,11 +40,35 @@ defmodule Projection.Session do
           subscription_hook: (atom(), term() -> any())
         }
 
+  @doc """
+  Starts a session process linked to the caller.
+
+  ## Options
+
+    * `:name` — registered process name
+    * `:sid` — initial session ID (assigned on first `ready` if `nil`)
+    * `:router` — router module (e.g. `Projection.Router`)
+    * `:route` — initial route name (defaults to the router's first route)
+    * `:screen_module` — screen module when running without a router
+    * `:screen_params` — params passed to `c:ProjectionUI.Screen.mount/3`
+    * `:screen_session` — session map passed to `c:ProjectionUI.Screen.mount/3`
+    * `:tick_ms` — interval for `:tick` messages (nil disables)
+    * `:port_owner` — name or pid of the `ProjectionUI.PortOwner` for outbound envelopes
+    * `:subscription_hook` — `(action, topic -> any())` callback for pub/sub
+
+  """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name))
   end
 
+  @doc """
+  Sends a UI envelope to the session asynchronously.
+
+  This is the primary entry point used by `ProjectionUI.PortOwner` to forward
+  `ready` and `intent` envelopes from the host. Outbound responses (renders,
+  patches) are dispatched back through the port owner.
+  """
   @spec handle_ui_envelope(GenServer.server(), map()) :: :ok
   def handle_ui_envelope(session, envelope) when is_map(envelope) do
     GenServer.cast(session, {:ui_envelope, envelope})
@@ -61,6 +86,7 @@ defmodule Projection.Session do
     handle_ui_envelope(session, envelope)
   end
 
+  @doc "Returns the full internal state of the session. Useful for testing and debugging."
   @spec snapshot(GenServer.server()) :: state()
   def snapshot(session), do: GenServer.call(session, :snapshot)
 

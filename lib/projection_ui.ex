@@ -1,8 +1,23 @@
 defmodule ProjectionUI do
   @moduledoc """
-  UI-layer entrypoint for screen modules in Projection.
+  UI-layer entrypoint for Projection screen modules.
+
+  Use this module with the `:screen` atom to set up a screen:
+
+      defmodule MyApp.Screens.Greeter do
+        use ProjectionUI, :screen
+
+        schema do
+          field :greeting, :string, default: "Hello!"
+        end
+      end
+
+  This imports `ProjectionUI.State` helpers (`assign/3`, `update/3`),
+  applies the `ProjectionUI.Screen` behaviour, uses the `ProjectionUI.Schema`
+  DSL, and provides default implementations for all optional callbacks.
   """
 
+  @doc false
   def screen do
     quote do
       @behaviour ProjectionUI.Screen

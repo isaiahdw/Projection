@@ -1,4 +1,10 @@
 defmodule Mix.Tasks.Compile.ProjectionUiHost do
+  @moduledoc """
+  Compiler task that builds the Slint UI host binary and copies it to `priv/ui_host/`.
+
+  Uses `--release` in `:prod` Mix env, debug profile otherwise.
+  """
+
   use Mix.Task.Compiler
 
   @recursive true

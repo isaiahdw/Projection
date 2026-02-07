@@ -13,6 +13,7 @@ defmodule Projection.Router.DSL do
       end
   """
 
+  @doc false
   defmacro __using__(_opts) do
     quote do
       import Projection.Router.DSL, only: [screen_session: 2, screen: 3, screen: 4]
@@ -23,6 +24,12 @@ defmodule Projection.Router.DSL do
     end
   end
 
+  @doc """
+  Defines a navigation boundary.
+
+  Screens inside the same `screen_session` can navigate to each other freely.
+  Cross-session navigation is blocked, similar to Phoenix LiveView's `live_session`.
+  """
   defmacro screen_session(name, do: block) do
     caller = __CALLER__
     expanded_name = Macro.expand(name, caller)
@@ -34,12 +41,25 @@ defmodule Projection.Router.DSL do
     end
   end
 
+  @doc """
+  Registers a screen route.
+
+  `path` must start with `/`. The route name defaults to the last path segment
+  unless overridden with the `:as` option.
+
+  ## Examples
+
+      screen "/clock", MyApp.Screens.Clock, :show
+      screen "/devices", MyApp.Screens.Devices, :index, as: :devices
+
+  """
   defmacro screen(path, screen_module, action) do
     quote do
       screen(unquote(path), unquote(screen_module), unquote(action), [])
     end
   end
 
+  @doc false
   defmacro screen(path, screen_module, action, opts) do
     caller = __CALLER__
 
@@ -88,9 +108,13 @@ defmodule Projection.Router.DSL do
     route_names = Enum.map(routes, & &1.name)
 
     quote do
+      @typedoc "A route name string (e.g. `\"clock\"`)."
       @type route_name :: String.t()
+
+      @typedoc "Arbitrary params map carried on each nav stack entry."
       @type route_params :: map()
 
+      @typedoc "Compile-time route metadata generated from `screen` declarations."
       @type route_def :: %{
               name: route_name(),
               route_key: atom(),
@@ -100,12 +124,14 @@ defmodule Projection.Router.DSL do
               screen_session: atom()
             }
 
+      @typedoc "A single entry on the navigation stack."
       @type route_entry :: %{
               name: route_name(),
               params: route_params(),
               action: atom() | nil
             }
 
+      @typedoc "Navigation state holding the route stack."
       @type nav :: %{
               stack: [route_entry()]
             }
@@ -117,18 +143,23 @@ defmodule Projection.Router.DSL do
       @route_names unquote(Macro.escape(route_names))
       @default_route_name unquote(default_route_name)
 
+      @doc "Returns the name of the first declared route."
       @spec default_route_name() :: route_name()
       def default_route_name, do: @default_route_name
 
+      @doc "Returns all route definitions keyed by name."
       @spec route_defs() :: %{route_name() => route_def()}
       def route_defs, do: @routes
 
+      @doc "Returns all route keys in declaration order."
       @spec route_keys() :: [atom()]
       def route_keys, do: @route_keys
 
+      @doc "Returns all route names in declaration order."
       @spec route_names() :: [route_name()]
       def route_names, do: @route_names
 
+      @doc "Resolves a route key atom to its route name string."
       @spec route_name(atom()) :: route_name()
       def route_name(route_key) when is_atom(route_key) do
         case @route_name_by_key do
@@ -140,6 +171,7 @@ defmodule Projection.Router.DSL do
         end
       end
 
+      @doc "Resolves a route key atom to its path string."
       @spec route_path(atom()) :: String.t()
       def route_path(route_key) when is_atom(route_key) do
         case @route_path_by_key do
@@ -151,6 +183,7 @@ defmodule Projection.Router.DSL do
         end
       end
 
+      @doc "Looks up a route definition by name."
       @spec resolve(route_name()) :: {:ok, route_def()} | {:error, :unknown_route}
       def resolve(name) when is_binary(name) do
         case @routes do
@@ -161,6 +194,7 @@ defmodule Projection.Router.DSL do
 
       def resolve(_name), do: {:error, :unknown_route}
 
+      @doc "Creates a nav state with a single-entry stack for the given route."
       @spec initial_nav(route_name(), route_params()) :: {:ok, nav()} | {:error, :unknown_route}
       def initial_nav(name, params \\ %{}) when is_map(params) do
         with {:ok, route_def} <- resolve(name) do
@@ -168,10 +202,12 @@ defmodule Projection.Router.DSL do
         end
       end
 
+      @doc "Returns the top entry on the nav stack."
       @spec current(nav()) :: route_entry()
       def current(%{stack: [current | _rest]}), do: current
       def current(%{stack: []}), do: raise(ArgumentError, "nav stack cannot be empty")
 
+      @doc "Pushes a new route onto the nav stack."
       @spec navigate(nav(), route_name(), route_params()) ::
               {:ok, nav()} | {:error, :unknown_route}
       def navigate(%{stack: stack} = nav, name, params \\ %{})
@@ -181,6 +217,7 @@ defmodule Projection.Router.DSL do
         end
       end
 
+      @doc "Pops the top entry. Returns `{:error, :root}` if already at the root."
       @spec back(nav()) :: {:ok, nav()} | {:error, :root}
       def back(%{stack: [_current]}), do: {:error, :root}
 
@@ -188,12 +225,14 @@ defmodule Projection.Router.DSL do
         {:ok, %{nav | stack: rest}}
       end
 
+      @doc "Merges `params_patch` into the current entry's params without pushing a new entry."
       @spec patch(nav(), route_params()) :: nav()
       def patch(%{stack: [current | rest]} = nav, params_patch) when is_map(params_patch) do
         patched_current = %{current | params: Map.merge(current.params, params_patch)}
         %{nav | stack: [patched_current | rest]}
       end
 
+      @doc "Returns the `t:route_def/0` for the top nav entry."
       @spec current_route(nav()) :: {:ok, route_def()} | {:error, :unknown_route}
       def current_route(nav) do
         nav
@@ -202,6 +241,7 @@ defmodule Projection.Router.DSL do
         |> resolve()
       end
 
+      @doc "Returns `{:ok, true}` if navigating to `to_name` would cross a session boundary."
       @spec screen_session_transition?(nav(), route_name()) ::
               {:ok, boolean()} | {:error, :unknown_route}
       def screen_session_transition?(nav, to_name) when is_binary(to_name) do
@@ -211,10 +251,12 @@ defmodule Projection.Router.DSL do
         end
       end
 
+      @doc "Alias for `screen_session_transition?/2` (LiveView naming convention)."
       @spec live_session_transition?(nav(), route_name()) ::
               {:ok, boolean()} | {:error, :unknown_route}
       def live_session_transition?(nav, to_name), do: screen_session_transition?(nav, to_name)
 
+      @doc "Converts the nav state to a view-model map with `:stack` and `:current` keys."
       @spec to_vm(nav()) :: map()
       def to_vm(nav) do
         current_entry = current(nav)
