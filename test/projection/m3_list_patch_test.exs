@@ -48,13 +48,15 @@ defmodule Projection.M3ListPatchTest do
          ]}
       )
 
-    assert {:ok, [render]} = Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+    assert {:ok, [render]} =
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
+
     assert render["t"] == "render"
     assert render["rev"] == 1
     assert length(render["vm"][:devices][:order]) == 500
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 77,

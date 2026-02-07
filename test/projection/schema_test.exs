@@ -64,7 +64,9 @@ defmodule Projection.SchemaTest do
          ]}
       )
 
-    assert {:ok, [render]} = Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+    assert {:ok, [render]} =
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
+
     assert render["vm"][:title] == "Ready"
     assert render["vm"][:enabled] == true
     assert render["vm"][:count] == 7

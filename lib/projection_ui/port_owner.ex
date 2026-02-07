@@ -70,7 +70,7 @@ defmodule ProjectionUI.PortOwner do
     next_state =
       case Protocol.decode_inbound(payload) do
         {:ok, envelope} ->
-          Session.handle_ui_envelope_async(state.session, envelope)
+          Session.handle_ui_envelope(state.session, envelope)
           state
 
         {:error, reason} ->

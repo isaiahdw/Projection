@@ -44,14 +44,21 @@ defmodule Projection.Session do
     GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name))
   end
 
-  @spec handle_ui_envelope(GenServer.server(), map()) :: {:ok, [map()]}
+  @spec handle_ui_envelope(GenServer.server(), map()) :: :ok
   def handle_ui_envelope(session, envelope) when is_map(envelope) do
-    GenServer.call(session, {:ui_envelope, envelope})
+    GenServer.cast(session, {:ui_envelope, envelope})
   end
 
+  @doc false
+  @spec handle_ui_envelope_sync(GenServer.server(), map()) :: {:ok, [map()]}
+  def handle_ui_envelope_sync(session, envelope) when is_map(envelope) do
+    GenServer.call(session, {:ui_envelope_sync, envelope})
+  end
+
+  @deprecated "use handle_ui_envelope/2"
   @spec handle_ui_envelope_async(GenServer.server(), map()) :: :ok
   def handle_ui_envelope_async(session, envelope) when is_map(envelope) do
-    GenServer.cast(session, {:ui_envelope_async, envelope})
+    handle_ui_envelope(session, envelope)
   end
 
   @spec snapshot(GenServer.server()) :: state()
@@ -93,13 +100,13 @@ defmodule Projection.Session do
   @impl true
   def handle_call(:snapshot, _from, state), do: {:reply, state, state}
 
-  def handle_call({:ui_envelope, envelope}, _from, state) do
+  def handle_call({:ui_envelope_sync, envelope}, _from, state) do
     {:ok, outbound, next_state} = process_ui_envelope(envelope, state)
     {:reply, {:ok, outbound}, next_state}
   end
 
   @impl true
-  def handle_cast({:ui_envelope_async, envelope}, state) do
+  def handle_cast({:ui_envelope, envelope}, state) do
     {:ok, outbound, next_state} = process_ui_envelope(envelope, state)
     {:noreply, dispatch_outbound(next_state, outbound)}
   end

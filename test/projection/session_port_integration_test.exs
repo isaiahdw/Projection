@@ -3,11 +3,29 @@ defmodule Projection.SessionPortIntegrationTest do
 
   alias Projection.Session
 
+  test "handle_ui_envelope/2 is async and delivers render via port owner" do
+    {:ok, session} =
+      start_supervised(
+        {Session,
+         [
+           sid: "S1",
+           port_owner: self()
+         ]}
+      )
+
+    assert :ok == Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+
+    assert_receive {:"$gen_cast", {:send_envelope, render}}, 200
+    assert render["t"] == "render"
+    assert render["sid"] == "S1"
+    assert render["rev"] == 1
+  end
+
   test "ready triggers render and keeps stable sid with monotonic rev" do
     {:ok, session} = start_supervised({Session, [screen_params: %{"clock_text" => "10:42:17"}]})
 
     assert {:ok, [render_1]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     assert render_1["t"] == "render"
     assert render_1["sid"] == "S1"
@@ -16,7 +34,7 @@ defmodule Projection.SessionPortIntegrationTest do
 
     # A reconnect-ready with a different sid keeps the session sid stable.
     assert {:ok, [render_2]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S2"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S2"})
 
     assert render_2["sid"] == "S1"
     assert render_2["rev"] == 2
@@ -39,7 +57,7 @@ defmodule Projection.SessionPortIntegrationTest do
       )
 
     assert {:ok, [_render]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     send(session, :tick)
 
@@ -69,10 +87,10 @@ defmodule Projection.SessionPortIntegrationTest do
       )
 
     assert {:ok, [_render]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 1,
@@ -93,7 +111,7 @@ defmodule Projection.SessionPortIntegrationTest do
     refute_receive {:"$gen_cast", {:send_envelope, _}}, 100
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 2,
@@ -134,10 +152,10 @@ defmodule Projection.SessionPortIntegrationTest do
       )
 
     assert {:ok, [_render]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 3,
@@ -173,10 +191,10 @@ defmodule Projection.SessionPortIntegrationTest do
       )
 
     assert {:ok, [_render]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 4,
@@ -206,10 +224,10 @@ defmodule Projection.SessionPortIntegrationTest do
       )
 
     assert {:ok, [_render]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 5,
@@ -230,10 +248,10 @@ defmodule Projection.SessionPortIntegrationTest do
       )
 
     assert {:ok, [_render]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 6,

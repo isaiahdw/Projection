@@ -16,14 +16,16 @@ defmodule Projection.SessionRouterTest do
          ]}
       )
 
-    assert {:ok, [render]} = Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+    assert {:ok, [render]} =
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
+
     assert render["vm"][:screen][:name] == "clock"
     assert render["vm"][:screen][:vm][:clock_text] == "10:42:17"
     assert render["vm"][:nav][:current][:name] == "clock"
     assert length(render["vm"][:nav][:stack]) == 1
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 10,
@@ -42,7 +44,7 @@ defmodule Projection.SessionRouterTest do
     assert length(snapshot.vm.screen.vm.devices.order) == 2
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 11,
@@ -75,10 +77,10 @@ defmodule Projection.SessionRouterTest do
       )
 
     assert {:ok, [_render]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 12,
@@ -112,10 +114,10 @@ defmodule Projection.SessionRouterTest do
       )
 
     assert {:ok, [_render]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 13,
@@ -142,10 +144,10 @@ defmodule Projection.SessionRouterTest do
       )
 
     assert {:ok, [_render]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 14,
@@ -181,10 +183,10 @@ defmodule Projection.SessionRouterTest do
     assert_receive {:subscription, :subscribe, "clock.timezone:UTC"}, 200
 
     assert {:ok, [_render]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 20,
@@ -196,7 +198,7 @@ defmodule Projection.SessionRouterTest do
     assert_receive {:subscription, :subscribe, "devices"}, 200
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 21,
@@ -228,10 +230,10 @@ defmodule Projection.SessionRouterTest do
     assert_receive {:subscription, :subscribe, "clock.timezone:UTC"}, 200
 
     assert {:ok, [_render]} =
-             Session.handle_ui_envelope(session, %{"t" => "ready", "sid" => "S1"})
+             Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
 
     assert {:ok, []} =
-             Session.handle_ui_envelope(session, %{
+             Session.handle_ui_envelope_sync(session, %{
                "t" => "intent",
                "sid" => "S1",
                "id" => 22,
