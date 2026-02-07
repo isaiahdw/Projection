@@ -16,6 +16,10 @@ defmodule ProjectionUI.Schema do
     * `:list` — default `[]`
     * `:id_table` — default `%{order: [], by_id: %{}}`
 
+  Component fields are declared with `component/2,3` (not `field/3`):
+
+      component :status_badge, ProjectionUI.Components.StatusBadge
+
   ## Collection guidance
 
   `:list` is intended for small or low-churn collections. For larger lists
@@ -32,10 +36,12 @@ defmodule ProjectionUI.Schema do
   """
 
   @allowed_types [:string, :bool, :integer, :float, :map, :list, :id_table]
+  @component_supported_types [:string, :bool, :integer, :float, :list, :id_table]
 
   defmacro __using__(_opts) do
     quote do
-      import ProjectionUI.Schema, only: [schema: 1, field: 2, field: 3]
+      import ProjectionUI.Schema,
+        only: [schema: 1, field: 2, field: 3, component: 2, component: 3]
 
       Module.register_attribute(__MODULE__, :projection_schema_fields, accumulate: true)
       Module.register_attribute(__MODULE__, :projection_schema_declared, persist: false)
@@ -89,6 +95,33 @@ defmodule ProjectionUI.Schema do
 
     quote do
       @projection_schema_fields {unquote(expanded_name), unquote(expanded_type),
+                                 unquote(Macro.escape(normalized_opts))}
+    end
+  end
+
+  @doc """
+  Declares a reusable component field inside a `schema` block.
+
+  The component module must use `ProjectionUI, :component` and declare a
+  non-empty schema using supported component field types.
+  """
+  defmacro component(name, module, opts \\ []) do
+    caller = __CALLER__
+    expanded_name = Macro.expand(name, caller)
+    expanded_module = Macro.expand(module, caller)
+    expanded_opts = expand_literal!(opts, caller, "component options")
+
+    validate_name!(expanded_name, caller)
+    validate_component_context!(caller)
+    validate_component_opts!(expanded_opts, caller)
+
+    {component_opts, default} =
+      normalize_component_definition!(expanded_name, expanded_module, expanded_opts, caller)
+
+    normalized_opts = Keyword.put(component_opts, :default, default)
+
+    quote do
+      @projection_schema_fields {unquote(expanded_name), :component,
                                  unquote(Macro.escape(normalized_opts))}
     end
   end
@@ -290,6 +323,7 @@ defmodule ProjectionUI.Schema do
   defp value_matches_type?(:map, value, _opts), do: is_map(value)
   defp value_matches_type?(:list, value, _opts), do: is_list(value)
   defp value_matches_type?(:id_table, value, opts), do: valid_id_table?(value, opts)
+  defp value_matches_type?(:component, value, opts), do: valid_component_value?(value, opts)
 
   defp default_for_type(:string), do: ""
   defp default_for_type(:bool), do: false
@@ -342,4 +376,200 @@ defmodule ProjectionUI.Schema do
       ArgumentError -> :error
     end
   end
+
+  defp validate_component_context!(caller) do
+    if Module.get_attribute(caller.module, :projection_schema_owner) == :component do
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description:
+          "nested `component` declarations are not supported in v1 (component module: #{inspect(caller.module)})"
+    end
+  end
+
+  defp validate_component_opts!(opts, caller) when is_list(opts) do
+    unknown_keys =
+      opts
+      |> Keyword.keys()
+      |> Enum.uniq()
+      |> Enum.reject(&(&1 in [:default]))
+
+    if unknown_keys != [] do
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description:
+          "unsupported component options: #{inspect(unknown_keys)} (supported: [:default])"
+    end
+  end
+
+  defp validate_component_opts!(opts, caller) do
+    raise CompileError,
+      file: caller.file,
+      line: caller.line,
+      description: "component options must be a keyword list, got: #{inspect(opts)}"
+  end
+
+  defp normalize_component_definition!(name, module, opts, caller) do
+    validate_component_module!(module, caller)
+
+    component_schema = component_schema!(module, caller)
+
+    if component_schema == [] do
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description:
+          "component #{inspect(name)} references #{inspect(module)} with no schema fields"
+    end
+
+    unsupported_types =
+      component_schema
+      |> Enum.map(& &1.type)
+      |> Enum.uniq()
+      |> Enum.reject(&(&1 in @component_supported_types))
+
+    if unsupported_types != [] do
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description:
+          "component #{inspect(module)} uses unsupported field types for v1: #{inspect(unsupported_types)}. " <>
+            "Supported: #{inspect(@component_supported_types)}"
+    end
+
+    component_defaults =
+      case module.schema() do
+        defaults when is_map(defaults) ->
+          defaults
+
+        other ->
+          raise CompileError,
+            file: caller.file,
+            line: caller.line,
+            description:
+              "component #{inspect(module)}.schema/0 must return a map, got: #{inspect(other)}"
+      end
+
+    default_overrides = Keyword.get(opts, :default, %{})
+
+    unless is_map(default_overrides) do
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description:
+          "component #{inspect(name)} default override must be a map, got: #{inspect(default_overrides)}"
+    end
+
+    unless Enum.all?(Map.keys(default_overrides), &is_atom/1) do
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description:
+          "component #{inspect(name)} default override keys must be atoms, got: #{inspect(Map.keys(default_overrides))}"
+    end
+
+    unknown_override_keys =
+      default_overrides
+      |> Map.keys()
+      |> Enum.reject(&Map.has_key?(component_defaults, &1))
+
+    if unknown_override_keys != [] do
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description:
+          "component #{inspect(name)} has unknown default keys: #{inspect(unknown_override_keys)}"
+    end
+
+    merged_default = Map.merge(component_defaults, default_overrides)
+
+    Enum.each(component_schema, fn field ->
+      field_name = field.name
+      field_value = Map.get(merged_default, field_name)
+      field_opts = Map.get(field, :opts, [])
+
+      unless value_matches_type?(field.type, field_value, field_opts) do
+        raise CompileError,
+          file: caller.file,
+          line: caller.line,
+          description:
+            "invalid component default for #{inspect(name)}.#{field_name}: " <>
+              "expected #{inspect(field.type)}, got #{inspect(field_value)}"
+      end
+    end)
+
+    {[module: module], merged_default}
+  end
+
+  defp validate_component_module!(module, caller) when is_atom(module) do
+    case Code.ensure_compiled(module) do
+      {:module, _module} ->
+        :ok
+
+      {:error, reason} ->
+        raise CompileError,
+          file: caller.file,
+          line: caller.line,
+          description: "failed to compile component module #{inspect(module)}: #{inspect(reason)}"
+    end
+
+    unless function_exported?(module, :__projection_component__, 0) do
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description: "component module #{inspect(module)} must use `ProjectionUI, :component`"
+    end
+  end
+
+  defp validate_component_module!(module, caller) do
+    raise CompileError,
+      file: caller.file,
+      line: caller.line,
+      description: "component module must be an alias atom, got: #{inspect(module)}"
+  end
+
+  defp component_schema!(module, caller) do
+    unless function_exported?(module, :__projection_schema__, 0) do
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description: "component module #{inspect(module)} must export __projection_schema__/0"
+    end
+
+    case module.__projection_schema__() do
+      schema when is_list(schema) ->
+        schema
+
+      other ->
+        raise CompileError,
+          file: caller.file,
+          line: caller.line,
+          description:
+            "component module #{inspect(module)} returned invalid schema metadata: #{inspect(other)}"
+    end
+  end
+
+  defp valid_component_value?(value, opts) when is_map(value) and is_list(opts) do
+    with module when is_atom(module) <- Keyword.get(opts, :module),
+         true <- function_exported?(module, :__projection_schema__, 0) do
+      schema = module.__projection_schema__()
+      expected_keys = schema |> Enum.map(& &1.name) |> Enum.sort()
+      value_keys = value |> Map.keys() |> Enum.sort()
+
+      expected_keys == value_keys and
+        Enum.all?(schema, fn field ->
+          field_opts = Map.get(field, :opts, [])
+
+          case Map.fetch(value, field.name) do
+            {:ok, field_value} -> value_matches_type?(field.type, field_value, field_opts)
+            :error -> false
+          end
+        end)
+    else
+      _ -> false
+    end
+  end
+
+  defp valid_component_value?(_value, _opts), do: false
 end

@@ -41,7 +41,12 @@ defmodule Projection.SessionBatchingTest do
     assert patch["sid"] == "S1"
     assert patch["rev"] == 2
     assert patch["ack"] == 102
-    assert [%{"op" => "replace", "path" => "/clock_running", "value" => true}] = patch["ops"]
+
+    assert [
+             %{"op" => "replace", "path" => "/clock_running", "value" => true},
+             %{"op" => "replace", "path" => "/status_badge/label", "value" => "Running"},
+             %{"op" => "replace", "path" => "/status_badge/status", "value" => "ok"}
+           ] == Enum.sort_by(patch["ops"], & &1["path"])
 
     refute_receive {:"$gen_cast", {:send_envelope, _}}, 200
   end

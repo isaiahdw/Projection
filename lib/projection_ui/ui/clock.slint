@@ -1,5 +1,6 @@
 import { ComboBox, LineEdit } from "std-widgets.slint";
 import { Screen } from "screen.slint";
+import { StatusBadge } from "components/status_badge.slint";
 
 export component ClockScreen inherits Screen {
     in property <string> clock_text: "--:--:--";
@@ -7,6 +8,8 @@ export component ClockScreen inherits Screen {
     in property <string> clock_timezone: "UTC";
     in property <string> clock_label: "Projection Clock";
     in property <string> clock_label_error: "";
+    in property <string> status_badge_label: "Running";
+    in property <string> status_badge_status: "ok";
     private property <string> label_draft: root.clock_label;
     private property <string> last_submitted_label: "";
 
@@ -34,20 +37,10 @@ export component ClockScreen inherits Screen {
         // Status pill
         HorizontalLayout {
             alignment: center;
-
-            Rectangle {
-                width: status_text.preferred-width + 20px;
-                height: 22px;
-                border-radius: 11px;
-                background: root.clock_running ? #1a3a2a : #3a2a1a;
-
-                status_text := Text {
-                    text: root.clock_running ? "Running" : "Paused";
-                    font-size: 11px;
-                    color: root.clock_running ? #66cc88 : #cc8844;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
+            StatusBadge {
+                label: root.status_badge_label;
+                status: root.status_badge_status;
+                intent(intent_name, intent_arg) => { root.intent(intent_name, intent_arg); }
             }
         }
     }

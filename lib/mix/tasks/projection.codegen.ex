@@ -8,8 +8,8 @@ defmodule Mix.Tasks.Projection.Codegen do
   `__projection_schema__/0` metadata defined in `ProjectionUI.Screens.*` modules.
   """
 
-  @supported_schema_types [:string, :bool, :integer, :float, :map, :list, :id_table]
-  @supported_codegen_types [:string, :bool, :integer, :float, :list, :id_table]
+  @supported_schema_types [:string, :bool, :integer, :float, :map, :list, :id_table, :component]
+  @supported_codegen_types [:string, :bool, :integer, :float, :list, :id_table, :component]
 
   @impl Mix.Task
   def run(_args) do
@@ -275,20 +275,98 @@ defmodule Mix.Tasks.Projection.Codegen do
     [id_field | column_fields]
   end
 
-  defp expand_codegen_field(%{name: name, type: type, default: default}) do
+  defp expand_codegen_field(%{name: name, type: :component, default: default, opts: opts}) do
+    module = Keyword.fetch!(opts, :module)
+
+    module
+    |> component_schema_fields!()
+    |> Enum.flat_map(fn component_field ->
+      component_default = Map.get(default, component_field.name, component_field.default)
+      expand_component_codegen_field(name, component_field, component_default)
+    end)
+  end
+
+  defp expand_codegen_field(%{name: name, type: type, default: default, opts: opts}) do
     [
       %{
         name: name,
         type: type,
         default: default,
+        opts: opts,
         source: %{kind: :direct, root: name}
       }
     ]
   end
 
-  defp ensure_app_loaded! do
-    Mix.Task.run("loadpaths")
+  defp expand_component_codegen_field(
+         component_root,
+         %{name: field_name, type: :id_table, opts: opts},
+         component_default
+       ) do
+    columns = Keyword.get(opts, :columns, [])
+    ids_default = Map.get(component_default, :order, [])
 
+    id_field = %{
+      name: :"#{component_root}_#{field_name}_ids",
+      type: :list,
+      default: ids_default,
+      source: %{
+        kind: :component_id_table,
+        component: component_root,
+        root: field_name,
+        role: :ids
+      }
+    }
+
+    column_fields =
+      Enum.map(columns, fn column ->
+        column_values_default = id_table_column_values(component_default, column)
+
+        %{
+          name: :"#{component_root}_#{field_name}_#{column}",
+          type: :list,
+          default: column_values_default,
+          source: %{
+            kind: :component_id_table,
+            component: component_root,
+            root: field_name,
+            role: {:column, column}
+          }
+        }
+      end)
+
+    [id_field | column_fields]
+  end
+
+  defp expand_component_codegen_field(
+         component_root,
+         %{name: field_name, type: field_type, opts: opts},
+         component_default
+       ) do
+    [
+      %{
+        name: :"#{component_root}_#{field_name}",
+        type: field_type,
+        default: component_default,
+        opts: opts,
+        source: %{kind: :component, component: component_root, field: field_name}
+      }
+    ]
+  end
+
+  defp component_schema_fields!(module) do
+    unless function_exported?(module, :__projection_schema__, 0) do
+      raise ArgumentError,
+            "component module #{inspect(module)} is missing __projection_schema__/0"
+    end
+
+    module
+    |> apply(:__projection_schema__, [])
+    |> Enum.map(&normalize_field!/1)
+    |> Enum.sort_by(&Atom.to_string(&1.name))
+  end
+
+  defp ensure_app_loaded! do
     case Application.load(:projection) do
       :ok -> :ok
       {:error, {:already_loaded, :projection}} -> :ok
@@ -418,17 +496,87 @@ defmodule Mix.Tasks.Projection.Codegen do
       global_name = spec.global_name
       global_type = "crate::#{global_name}"
       direct_fields = Enum.filter(spec.fields, &(&1.source.kind == :direct))
+      component_fields = Enum.filter(spec.fields, &(&1.source.kind == :component))
       id_table_fields = Enum.filter(spec.fields, &(&1.source.kind == :id_table))
+
+      component_id_table_fields =
+        Enum.filter(spec.fields, &(&1.source.kind == :component_id_table))
 
       id_table_roots =
         id_table_fields
         |> Enum.group_by(& &1.source.root)
         |> Enum.sort_by(fn {root, _fields} -> Atom.to_string(root) end)
 
+      component_id_table_roots =
+        component_id_table_fields
+        |> Enum.group_by(fn field -> {field.source.component, field.source.root} end)
+        |> Enum.sort_by(fn {{component, root}, _fields} ->
+          {Atom.to_string(component), Atom.to_string(root)}
+        end)
+
+      component_direct_groups =
+        component_fields
+        |> Enum.group_by(& &1.source.component)
+        |> Map.new(fn {component, fields} ->
+          {component, Enum.sort_by(fields, &Atom.to_string(&1.name))}
+        end)
+
+      component_id_table_by_component =
+        component_id_table_roots
+        |> Enum.group_by(fn {{component, _root}, _fields} -> component end)
+
+      component_roots =
+        (Map.keys(component_direct_groups) ++ Map.keys(component_id_table_by_component))
+        |> Enum.uniq()
+        |> Enum.sort_by(&Atom.to_string/1)
+
+      component_root_groups =
+        Enum.map(component_roots, fn component ->
+          direct_group = Map.get(component_direct_groups, component, [])
+
+          id_table_group =
+            component_id_table_by_component
+            |> Map.get(component, [])
+            |> Enum.sort_by(fn {{_component, root}, _fields} -> Atom.to_string(root) end)
+
+          {component, direct_group, id_table_group}
+        end)
+
       direct_render_setters =
         direct_fields
         |> Enum.map_join("\n", fn field ->
           "        set_#{field.name}_from_vm(&g, screen_vm)?;"
+        end)
+
+      component_render_setters =
+        component_root_groups
+        |> Enum.map_join("\n", fn {component, direct_group, id_table_group} ->
+          component_name = Atom.to_string(component)
+          component_vm = component_vm_var(component)
+
+          component_direct_setters =
+            direct_group
+            |> Enum.map_join("\n", fn field ->
+              "        set_#{field.name}_from_component(&g, #{component_vm})?;"
+            end)
+
+          component_id_table_setters =
+            id_table_group
+            |> Enum.map_join("\n", fn {{_component, root}, _fields} ->
+              "        apply_component_id_table_#{component}_#{root}_from_component(&g, #{component_vm})?;"
+            end)
+
+          setters =
+            [component_direct_setters, component_id_table_setters]
+            |> Enum.reject(&(&1 == ""))
+            |> Enum.join("\n")
+
+          """
+                  let #{component_vm} = screen_vm
+                      .and_then(|root| root.get("#{component_name}"))
+                      .and_then(Value::as_object);
+          #{setters}
+          """
         end)
 
       id_table_render_setters =
@@ -438,14 +586,21 @@ defmodule Mix.Tasks.Projection.Codegen do
         end)
 
       render_field_setters =
-        [direct_render_setters, id_table_render_setters]
+        [direct_render_setters, component_render_setters, id_table_render_setters]
         |> Enum.reject(&(&1 == ""))
         |> Enum.join("\n")
 
       patch_apply_lines =
         [
           direct_fields |> Enum.map_join("\n", &render_patch_apply_line/1),
-          id_table_roots |> Enum.map_join("\n", &render_id_table_patch_apply_line/1)
+          component_fields |> Enum.map_join("\n", &render_patch_apply_line/1),
+          component_root_groups
+          |> Enum.map_join("\n", fn {component, direct_group, id_table_group} ->
+            render_component_root_patch_apply_line(component, direct_group, id_table_group)
+          end),
+          id_table_roots |> Enum.map_join("\n", &render_id_table_patch_apply_line/1),
+          component_id_table_roots
+          |> Enum.map_join("\n", &render_component_id_table_patch_apply_line/1)
         ]
         |> Enum.reject(&(&1 == ""))
         |> Enum.join("\n")
@@ -453,7 +608,14 @@ defmodule Mix.Tasks.Projection.Codegen do
       remove_apply_lines =
         [
           direct_fields |> Enum.map_join("\n", &render_remove_apply_line/1),
-          id_table_roots |> Enum.map_join("\n", &render_id_table_remove_apply_line/1)
+          component_fields |> Enum.map_join("\n", &render_remove_apply_line/1),
+          component_root_groups
+          |> Enum.map_join("\n", fn {component, direct_group, id_table_group} ->
+            render_component_root_remove_apply_line(component, direct_group, id_table_group)
+          end),
+          id_table_roots |> Enum.map_join("\n", &render_id_table_remove_apply_line/1),
+          component_id_table_roots
+          |> Enum.map_join("\n", &render_component_id_table_remove_apply_line/1)
         ]
         |> Enum.reject(&(&1 == ""))
         |> Enum.join("\n")
@@ -462,8 +624,16 @@ defmodule Mix.Tasks.Projection.Codegen do
         direct_fields
         |> Enum.map_join("\n", &render_field_helper(&1, global_type))
 
+      component_field_helpers =
+        component_fields
+        |> Enum.map_join("\n", &render_field_helper(&1, global_type))
+
       id_table_field_helpers =
         id_table_fields
+        |> Enum.map_join("\n", &render_field_helper(&1, global_type))
+
+      component_id_table_field_helpers =
+        component_id_table_fields
         |> Enum.map_join("\n", &render_field_helper(&1, global_type))
 
       id_table_root_helpers =
@@ -472,44 +642,60 @@ defmodule Mix.Tasks.Projection.Codegen do
           render_id_table_root_helper(root, fields, global_type)
         end)
 
+      component_id_table_root_helpers =
+        component_id_table_roots
+        |> Enum.map_join("\n", fn {root_tuple, fields} ->
+          render_component_id_table_root_helper(root_tuple, fields, global_type)
+        end)
+
       field_helpers =
-        [direct_field_helpers, id_table_field_helpers, id_table_root_helpers]
+        [
+          direct_field_helpers,
+          component_field_helpers,
+          id_table_field_helpers,
+          component_id_table_field_helpers,
+          id_table_root_helpers,
+          component_id_table_root_helpers
+        ]
         |> Enum.reject(&(&1 == ""))
         |> Enum.join("\n")
 
       parse_helpers =
-        direct_fields
+        (direct_fields ++ component_fields)
         |> Enum.map(& &1.type)
         |> Enum.uniq()
         |> Enum.sort()
         |> Enum.map_join("\n", &render_parse_helper/1)
 
       id_table_helpers =
-        if id_table_fields != [] do
+        if id_table_fields != [] or component_id_table_fields != [] do
           render_id_table_helpers()
         else
           ""
         end
 
       patch_screen_vm_line =
-        if id_table_roots == [] do
+        if id_table_roots == [] and component_id_table_roots == [] do
           ""
         else
           "    let screen_vm = vm.pointer(\"/screen/vm\").and_then(Value::as_object);\n"
         end
 
       patch_vm_param =
-        if id_table_roots == [] do
+        if id_table_roots == [] and component_id_table_roots == [] do
           "_vm"
         else
           "vm"
         end
 
+      needs_value =
+        direct_fields != [] or component_fields != [] or component_root_groups != []
+
       replace_add_pattern =
-        if direct_fields == [] do
-          "PatchOp::Replace { path, value: _ } | PatchOp::Add { path, value: _ }"
-        else
+        if needs_value do
           "PatchOp::Replace { path, value } | PatchOp::Add { path, value }"
+        else
+          "PatchOp::Replace { path, value: _ } | PatchOp::Add { path, value: _ }"
         end
 
       """
@@ -621,8 +807,77 @@ defmodule Mix.Tasks.Projection.Codegen do
   defp render_field_helper(
          %{
            name: name,
+           type: type,
+           default: default,
+           source: %{kind: :component, component: component_root, field: component_field}
+         },
+         global_name
+       ) do
+    field = Atom.to_string(name)
+    component_root_name = Atom.to_string(component_root)
+    component_field_name = Atom.to_string(component_field)
+    default_literal = rust_literal(type, default)
+    set_value_expr = rust_set_value_expr(name, type, "g")
+
+    """
+    fn set_#{field}_from_component(
+        g: &#{global_name},
+        component_vm: Option<&serde_json::Map<String, Value>>,
+    ) -> Result<(), String> {
+        if let Some(value) = component_vm.and_then(|root| root.get("#{component_field_name}")) {
+            return set_#{field}_from_value(g, "/screen/vm/#{component_root_name}/#{component_field_name}", value);
+        }
+
+        set_#{field}_default(g);
+        Ok(())
+    }
+
+    fn set_#{field}_from_value(g: &#{global_name}, path: &str, value: &Value) -> Result<(), String> {
+        #{set_value_expr}
+    }
+
+    fn set_#{field}_default(g: &#{global_name}) {
+        g.set_#{field}(#{default_literal});
+    }
+    """
+  end
+
+  defp render_field_helper(
+         %{
+           name: name,
            default: default,
            source: %{kind: :id_table, root: _root, role: role}
+         },
+         global_name
+       ) do
+    field = Atom.to_string(name)
+    default_literal = rust_literal(:list, default)
+    extract_expr = rust_id_table_extract_expr(role)
+
+    """
+    fn set_#{field}_from_parsed(g: &#{global_name}, parsed: &IdTableParsed) -> Result<(), String> {
+        #{extract_expr}
+        let model = slint::VecModel::from(
+            values
+                .into_iter()
+                .map(slint::SharedString::from)
+                .collect::<Vec<slint::SharedString>>(),
+        );
+        g.set_#{field}(slint::ModelRc::new(model));
+        Ok(())
+    }
+
+    fn set_#{field}_default(g: &#{global_name}) {
+        g.set_#{field}(#{default_literal});
+    }
+    """
+  end
+
+  defp render_field_helper(
+         %{
+           name: name,
+           default: default,
+           source: %{kind: :component_id_table, component: _component, root: _root, role: role}
          },
          global_name
        ) do
@@ -671,6 +926,62 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
   end
 
+  defp render_component_root_patch_apply_line(component, direct_group, id_table_group) do
+    component_name = Atom.to_string(component)
+    component_vm = component_vm_var(component)
+
+    direct_setters =
+      direct_group
+      |> Enum.map_join("\n", fn field ->
+        "                      set_#{field.name}_from_component(&g, #{component_vm})?;"
+      end)
+
+    id_table_setters =
+      id_table_group
+      |> Enum.map_join("\n", fn {{_component, root}, _fields} ->
+        "                      apply_component_id_table_#{component}_#{root}_from_component(&g, #{component_vm})?;"
+      end)
+
+    setters =
+      [direct_setters, id_table_setters]
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("\n")
+
+    """
+                      if field_path == "/#{component_name}" {
+                          let #{component_vm} = value.as_object();
+    #{setters}
+                      }
+    """
+  end
+
+  defp render_component_root_remove_apply_line(component, direct_group, id_table_group) do
+    component_name = Atom.to_string(component)
+
+    direct_defaults =
+      direct_group
+      |> Enum.map_join("\n", fn field ->
+        "                      set_#{field.name}_default(&g);"
+      end)
+
+    id_table_defaults =
+      id_table_group
+      |> Enum.map_join("\n", fn {{_component, root}, _fields} ->
+        "                      apply_component_id_table_#{component}_#{root}_from_component(&g, None)?;"
+      end)
+
+    defaults =
+      [direct_defaults, id_table_defaults]
+      |> Enum.reject(&(&1 == ""))
+      |> Enum.join("\n")
+
+    """
+                      if field_path == "/#{component_name}" {
+    #{defaults}
+                      }
+    """
+  end
+
   defp render_id_table_patch_apply_line({root, _fields}) do
     root_name = Atom.to_string(root)
     condition = rust_id_table_root_patch_match_condition(root)
@@ -693,15 +1004,66 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
   end
 
+  defp render_component_id_table_patch_apply_line({{component, root}, _fields}) do
+    component_name = Atom.to_string(component)
+    root_name = Atom.to_string(root)
+    condition = rust_component_id_table_patch_match_condition(component, root)
+    component_vm = component_vm_var(component)
+
+    """
+                      if #{condition} {
+                          let #{component_vm} =
+                              screen_vm
+                                  .and_then(|root| root.get("#{component_name}"))
+                                  .and_then(Value::as_object);
+                          apply_component_id_table_#{component_name}_#{root_name}_from_component(&g, #{component_vm})?;
+                      }
+    """
+  end
+
+  defp render_component_id_table_remove_apply_line({{component, root}, _fields}) do
+    component_name = Atom.to_string(component)
+    root_name = Atom.to_string(root)
+    condition = rust_component_id_table_patch_match_condition(component, root)
+    component_vm = component_vm_var(component)
+
+    """
+                      if #{condition} {
+                          let #{component_vm} =
+                              screen_vm
+                                  .and_then(|root| root.get("#{component_name}"))
+                                  .and_then(Value::as_object);
+                          apply_component_id_table_#{component_name}_#{root_name}_from_component(&g, #{component_vm})?;
+                      }
+    """
+  end
+
   defp rust_patch_match_condition(%{source: %{kind: :direct, root: root}}) do
     root_name = Atom.to_string(root)
     top_path = "/" <> root_name
     ~s(field_path == "#{top_path}")
   end
 
+  defp rust_patch_match_condition(%{
+         source: %{kind: :component, component: component, field: field}
+       }) do
+    component_name = Atom.to_string(component)
+    field_name = Atom.to_string(field)
+    ~s(field_path == "/#{component_name}/#{field_name}")
+  end
+
   defp rust_id_table_root_patch_match_condition(root) when is_atom(root) do
     root_name = Atom.to_string(root)
     top_path = "/" <> root_name
+
+    "field_path == \"#{top_path}\" || field_path.starts_with(\"#{top_path}/\")"
+  end
+
+  defp rust_component_id_table_patch_match_condition(component, root)
+       when is_atom(component) and is_atom(root) do
+    component_name = Atom.to_string(component)
+    root_name = Atom.to_string(root)
+    top_path = "/#{component_name}/#{root_name}"
 
     "field_path == \"#{top_path}\" || field_path.starts_with(\"#{top_path}/\")"
   end
@@ -749,6 +1111,51 @@ defmodule Mix.Tasks.Projection.Codegen do
     }
 
     fn apply_id_table_#{root_name}_from_value(
+        g: &#{global_name},
+        value: &Value,
+        path: &str,
+    ) -> Result<(), String> {
+        let parsed = parse_id_table(value, path)?;
+    #{parsed_setters}
+        Ok(())
+    }
+    """
+  end
+
+  defp render_component_id_table_root_helper({component, root}, fields, global_name) do
+    component_name = Atom.to_string(component)
+    root_name = Atom.to_string(root)
+
+    parsed_setters =
+      fields
+      |> Enum.map_join("\n", fn field ->
+        "    set_#{field.name}_from_parsed(g, &parsed)?;"
+      end)
+
+    defaults =
+      fields
+      |> Enum.map_join("\n", fn field ->
+        "    set_#{field.name}_default(g);"
+      end)
+
+    """
+    fn apply_component_id_table_#{component_name}_#{root_name}_from_component(
+        g: &#{global_name},
+        component_vm: Option<&serde_json::Map<String, Value>>,
+    ) -> Result<(), String> {
+        if let Some(value) = component_vm.and_then(|root| root.get("#{root_name}")) {
+            return apply_component_id_table_#{component_name}_#{root_name}_from_value(
+                g,
+                value,
+                "/screen/vm/#{component_name}/#{root_name}",
+            );
+        }
+
+    #{defaults}
+        Ok(())
+    }
+
+    fn apply_component_id_table_#{component_name}_#{root_name}_from_value(
         g: &#{global_name},
         value: &Value,
         path: &str,
@@ -833,6 +1240,15 @@ defmodule Mix.Tasks.Projection.Codegen do
     value
     |> Macro.camelize()
     |> String.replace(".", "")
+  end
+
+  defp component_vm_var(component) when is_atom(component) do
+    suffix =
+      component
+      |> Atom.to_string()
+      |> String.replace(~r/[^A-Za-z0-9_]/, "_")
+
+    "component_" <> suffix
   end
 
   defp render_parse_helper(:string) do
@@ -1007,15 +1423,6 @@ defmodule Mix.Tasks.Projection.Codegen do
       |> Enum.sort()
       |> Enum.join("\n")
 
-    ui_rerun_lines =
-      specs
-      |> Enum.map(fn spec ->
-        "    println!(\"cargo:rerun-if-changed=../../lib/projection_ui/ui/#{spec.file_name}.slint\");"
-      end)
-      |> Enum.uniq()
-      |> Enum.sort()
-      |> Enum.join("\n")
-
     """
     fn main() {
         slint_build::compile("src/generated/app.slint")
@@ -1027,11 +1434,7 @@ defmodule Mix.Tasks.Projection.Codegen do
         println!("cargo:rerun-if-changed=src/generated/error_state.slint");
     #{state_rerun_lines}
 
-        println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/app_shell.slint");
-        println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/ui.slint");
-        println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/screen.slint");
-        println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/error.slint");
-    #{ui_rerun_lines}
+        println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/");
     }
     """
   end

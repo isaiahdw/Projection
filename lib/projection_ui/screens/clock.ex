@@ -22,6 +22,10 @@ defmodule ProjectionUI.Screens.Clock do
     field(:clock_timezone, :string, default: "UTC")
     field(:clock_label, :string, default: "Projection Clock")
     field(:clock_label_error, :string, default: "")
+
+    component(:status_badge, ProjectionUI.Components.StatusBadge,
+      default: %{label: "Running", status: "ok"}
+    )
   end
 
   @spec mount(map(), map(), State.t()) :: {:ok, State.t()}
@@ -32,6 +36,7 @@ defmodule ProjectionUI.Screens.Clock do
       |> maybe_assign_clock_timezone(params)
       |> maybe_assign_clock_text(params)
       |> maybe_assign_clock_label(params)
+      |> sync_status_badge()
 
     {:ok, next_state}
   end
@@ -47,11 +52,21 @@ defmodule ProjectionUI.Screens.Clock do
 
   @impl true
   def handle_event("clock.pause", _params, state) do
-    {:noreply, assign(state, :clock_running, false)}
+    next_state =
+      state
+      |> assign(:clock_running, false)
+      |> sync_status_badge()
+
+    {:noreply, next_state}
   end
 
   def handle_event("clock.resume", _params, state) do
-    {:noreply, assign(state, :clock_running, true)}
+    next_state =
+      state
+      |> assign(:clock_running, true)
+      |> sync_status_badge()
+
+    {:noreply, next_state}
   end
 
   def handle_event("clock.set_timezone", payload, state) when is_map(payload) do
@@ -91,6 +106,7 @@ defmodule ProjectionUI.Screens.Clock do
       |> maybe_assign_clock_timezone(params)
       |> maybe_assign_clock_text(params)
       |> maybe_assign_clock_label(params)
+      |> sync_status_badge()
 
     {:noreply, next_state}
   end
@@ -139,6 +155,15 @@ defmodule ProjectionUI.Screens.Clock do
   defp clock_running?(state) do
     Map.get(state.assigns, :clock_running, true)
   end
+
+  @spec sync_status_badge(State.t()) :: State.t()
+  defp sync_status_badge(state) do
+    assign(state, :status_badge, status_badge(clock_running?(state)))
+  end
+
+  @spec status_badge(boolean()) :: %{label: String.t(), status: String.t()}
+  defp status_badge(true), do: %{label: "Running", status: "ok"}
+  defp status_badge(false), do: %{label: "Paused", status: "warn"}
 
   @spec clock_timezone(State.t()) :: String.t()
   defp clock_timezone(state) do

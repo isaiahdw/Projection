@@ -1,6 +1,6 @@
 defmodule ProjectionUI do
   @moduledoc """
-  UI-layer entrypoint for Projection screen modules.
+  UI-layer entrypoint for Projection screen and component modules.
 
   Use this module with the `:screen` atom to set up a screen:
 
@@ -15,6 +15,8 @@ defmodule ProjectionUI do
   This imports `ProjectionUI.State` helpers (`assign/3`, `update/3`),
   applies the `ProjectionUI.Screen` behaviour, uses the `ProjectionUI.Schema`
   DSL, and provides default implementations for all optional callbacks.
+
+  Reusable component schemas can be declared with `use ProjectionUI, :component`.
   """
 
   @doc false
@@ -25,6 +27,7 @@ defmodule ProjectionUI do
       alias ProjectionUI.State
       import ProjectionUI.State, only: [assign: 3, update: 3]
       use ProjectionUI.Schema
+      @projection_schema_owner :screen
 
       @doc false
       @spec mount(map(), map(), State.t()) :: {:ok, State.t()}
@@ -81,6 +84,18 @@ defmodule ProjectionUI do
                      handle_info: 2,
                      subscriptions: 2,
                      render: 1
+    end
+  end
+
+  @doc false
+  def component do
+    quote do
+      use ProjectionUI.Schema
+      @projection_schema_owner :component
+
+      @doc false
+      @spec __projection_component__() :: true
+      def __projection_component__, do: true
     end
   end
 

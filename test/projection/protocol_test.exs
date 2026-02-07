@@ -65,7 +65,9 @@ defmodule Projection.ProtocolTest do
         2,
         [
           %{"op" => "replace", "path" => "/clock_text", "value" => "10:42:18"}
-        ], ack: 7)
+        ],
+        ack: 7
+      )
 
     assert {:ok, patch_json} = Protocol.encode_outbound(patch)
     assert Jason.decode!(patch_json) == fixture["elixir_patch"]

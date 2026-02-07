@@ -46,6 +46,27 @@ defmodule Projection.SchemaTest do
     def render(assigns), do: assigns
   end
 
+  defmodule StatusBadgeComponent do
+    use ProjectionUI, :component
+
+    schema do
+      field(:label, :string, default: "Badge")
+      field(:status, :string, default: "ok")
+    end
+  end
+
+  defmodule ComponentScreen do
+    use ProjectionUI, :screen
+
+    schema do
+      field(:title, :string, default: "Dashboard")
+      component(:badge, StatusBadgeComponent, default: %{label: "API"})
+    end
+
+    @impl true
+    def render(assigns), do: assigns
+  end
+
   test "schema/0 returns defaults and metadata is normalized" do
     assert DemoScreen.schema() == %{
              count: 7,
@@ -78,6 +99,26 @@ defmodule Projection.SchemaTest do
            ]
 
     assert :ok == Schema.validate_render!(ContainerScreen)
+  end
+
+  test "schema supports reusable component fields" do
+    assert ComponentScreen.schema() == %{
+             badge: %{label: "API", status: "ok"},
+             title: "Dashboard"
+           }
+
+    assert [
+             %{
+               default: %{label: "API", status: "ok"},
+               name: :badge,
+               type: :component,
+               opts: opts
+             },
+             %{default: "Dashboard", name: :title, type: :string}
+           ] = ComponentScreen.__projection_schema__()
+
+    assert Keyword.fetch!(opts, :module) == StatusBadgeComponent
+    assert :ok == Schema.validate_render!(ComponentScreen)
   end
 
   test "screen modules must declare schema do/end" do

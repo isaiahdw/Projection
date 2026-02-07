@@ -140,11 +140,37 @@ export component GreeterScreen inherits VerticalLayout {
 
 Elixir updates `greeting`, the session diffs the view-model, and one `replace /greeting` patch op arrives in Slint. That's the whole loop.
 
-Schema fields are codegen-bound directly to Slint properties. Current built-in bindings support `:string`, `:bool`, `:integer`, `:float`, `:list` (list of strings), and `:id_table` for stable-ID row data.
+Schema fields are codegen-bound directly to Slint properties. Current built-in bindings support `:string`, `:bool`, `:integer`, `:float`, `:list` (list of strings), `:id_table` for stable-ID row data, and `component` fields that expand nested component schemas into typed screen properties.
 
 Performance note:
 - `:list` works well for small or mostly-static collections.
 - For large or high-churn collections, prefer `id_table` so updates can target rows by stable ID instead of replacing whole lists.
+
+## Reusable components
+
+Projection supports reusable typed components:
+
+```elixir
+defmodule MyApp.Components.StatusBadge do
+  use ProjectionUI, :component
+
+  schema do
+    field :label, :string, default: ""
+    field :status, :string, default: "ok"
+  end
+end
+```
+
+Screens embed them in the screen schema:
+
+```elixir
+schema do
+  field :title, :string, default: "Dashboard"
+  component :api_badge, MyApp.Components.StatusBadge, default: %{label: "API"}
+end
+```
+
+Component fields are namespaced in generated bindings (for example, `api_badge_label`, `api_badge_status`). For nested collections inside components, use `:id_table` when row-level patching matters.
 
 ## Routing
 
@@ -183,10 +209,12 @@ mix projection.codegen   # regenerate Rust bindings from schemas
 ```
 lib/projection/          session, protocol, router, patch
 lib/projection_ui/       screen behaviour, schema DSL, state, runtime supervision
+  components/            reusable typed component schemas (Elixir)
   runtime/               port owner and session supervisor
 lib/projection_ui/screens/
   clock.ex               screen controller (Elixir)
 lib/projection_ui/ui/    Slint UI files (app shell + screen templates)
+  components/            reusable Slint UI components
   clock.slint
   app_shell.slint
 slint/ui_host/           Rust host, protocol bridge, generated bindings

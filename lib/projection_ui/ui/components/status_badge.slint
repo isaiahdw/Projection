@@ -1,0 +1,23 @@
+export component StatusBadge inherits Rectangle {
+    in property <string> label: "";
+    in property <string> status: "ok";
+    callback intent(intent_name: string, intent_arg: string);
+
+    height: 22px;
+    border-radius: 11px;
+    background: root.status == "ok" ? #1a3a2a : #3a2a1a;
+
+    badge_touch := TouchArea {
+        clicked => {
+            root.intent("status_badge.click", root.label);
+        }
+    }
+
+    Text {
+        text: root.label;
+        font-size: 11px;
+        color: root.status == "ok" ? #66cc88 : #cc8844;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+}
