@@ -1,9 +1,9 @@
-export component ErrorScreen inherits VerticalLayout {
-    in property <int> vm_rev: 0;
+import { Screen } from "screen.slint";
+
+export component ErrorScreen inherits Screen {
     in property <string> title: "Rendering Error";
     in property <string> message: "";
     in property <string> screen_module: "";
-    callback intent(intent_name: string, intent_arg: string);
 
     spacing: 12px;
     padding: 8px;

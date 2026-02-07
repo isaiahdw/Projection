@@ -10,6 +10,8 @@ fn main() {
     println!("cargo:rerun-if-changed=src/generated/devices_state.slint");
 
     println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/app_shell.slint");
+    println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/ui.slint");
+    println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/screen.slint");
     println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/error.slint");
     println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/clock.slint");
     println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/devices.slint");

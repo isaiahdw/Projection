@@ -1,12 +1,10 @@
 import { ComboBox } from "std-widgets.slint";
+import { Screen } from "screen.slint";
 
-export component ClockScreen inherits VerticalLayout {
-    in property <int> vm_rev: 0;
+export component ClockScreen inherits Screen {
     in property <string> clock_text: "--:--:--";
     in property <bool> clock_running: true;
     in property <string> clock_timezone: "UTC";
-
-    callback intent(intent_name: string, intent_arg: string);
 
     spacing: 16px;
     alignment: start;

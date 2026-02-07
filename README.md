@@ -118,14 +118,22 @@ end
 The matching Slint template receives schema fields as properties and sends user actions back as intents:
 
 ```slint
+import { UI } from "ui.slint";
+
 export component GreeterScreen inherits VerticalLayout {
     in property <string> greeting: "Hello, world!";
-    callback intent(intent_name: string, intent_arg: string);
 
     Text {
         text: root.greeting;
         font-size: 24px;
         horizontal-alignment: center;
+    }
+
+    // Example user action
+    TouchArea {
+        clicked => {
+            UI.intent("update_greeting", "alice");
+        }
     }
 }
 ```

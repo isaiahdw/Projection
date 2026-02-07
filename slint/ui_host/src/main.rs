@@ -7,6 +7,7 @@ use crate::protocol::{
 };
 use serde_json::Value;
 use serde_json::json;
+use slint::ComponentHandle;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
@@ -205,6 +206,32 @@ fn install_callbacks(
     sid: String,
     next_intent_id: Arc<AtomicU64>,
 ) {
+    let bridge_tx = tx.clone();
+    let bridge_sid = sid.clone();
+    let bridge_next_id = next_intent_id.clone();
+    let bridge = ui.global::<UI>();
+    bridge.on_intent(move |intent_name, intent_arg| {
+        let name = intent_name.to_string();
+
+        if name.is_empty() {
+            return;
+        }
+
+        let payload = if intent_arg.is_empty() {
+            json!({})
+        } else {
+            json!({ "arg": intent_arg.to_string() })
+        };
+
+        send_intent(
+            &bridge_tx,
+            bridge_sid.clone(),
+            &bridge_next_id,
+            &name,
+            payload,
+        );
+    });
+
     let intent_tx = tx.clone();
     let intent_sid = sid.clone();
     let intent_next_id = next_intent_id.clone();

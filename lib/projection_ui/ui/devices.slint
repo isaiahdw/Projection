@@ -1,9 +1,9 @@
-export component DevicesScreen inherits VerticalLayout {
-    in property <int> vm_rev: 0;
+import { Screen } from "screen.slint";
+
+export component DevicesScreen inherits Screen {
     in property <[string]> devices_ids: [];
     in property <[string]> devices_name: [];
     in property <[string]> devices_status: [];
-    callback intent(intent_name: string, intent_arg: string);
 
     spacing: 8px;
 
