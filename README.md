@@ -1,55 +1,82 @@
 # Projection
 
-Projection is an Elixir-authoritative UI architecture for embedded and desktop-native apps.
+Projection is a lightweight UI architecture for embedded-style apps where Elixir is authoritative and Slint is the renderer.
 
-Elixir owns state, behavior, routing, validation, and side effects. A Rust + Slint host renders a projection of that state and forwards user intents back to Elixir.
+`Elixir owns truth. Slint renders a projection of that truth. Rust only bridges the two.`
 
-Projection is intentionally lightweight. It targets simple, reliable UIs for embedded devices and can also run on desktop for local development/testing.
+## What this is for
 
-It is not a full Phoenix LiveView replacement and currently omits many advanced LiveView concepts.
+Projection is built for UIs where reliability and predictable behavior matter more than rich browser features:
 
-Canonical rule:
-`Elixir owns truth. Slint renders a projection of that truth. The Rust host only bridges the two.`
+- Embedded and appliance-like interfaces
+- Local/native rendering without a browser
+- Clear separation between domain logic and rendering logic
 
-## Design Summary
+Elixir handles state, workflows, routing, and side effects.  
+Rust + Slint renders the current view-model and sends user intents back.
 
-- Keep domain logic in Elixir.
-- Keep rendering/input in Slint.
-- Keep Rust policy-free.
-- Move data via `render` + incremental `patch` envelopes, not imperative UI commands.
-
-## Architecture
+## How it works
 
 There are two event loops:
 
-- Elixir session loop (`Projection.Session`): authoritative state machine.
-- Slint UI loop: input, redraw, windowing.
+1. Elixir session loop (`Projection.Session`) computes the authoritative VM.
+2. Slint UI loop handles input and rendering.
 
-Rust bridges them:
+The Rust host sits between them over an OTP Port (`{:packet, 4}`), using `render` and incremental `patch` envelopes.
 
-- reader/writer threads handle framed JSON on stdin/stdout.
-- UI mutations happen on the Slint UI thread.
-- UI host enforces monotonic `rev` (`render` must be newer, `patch` must be `last_rev + 1`).
-- On `sid`/`rev` mismatch, UI host requests resync with `ready`.
+Typical flow:
 
-Transport uses OTP ports with `{:packet, 4}` framing.
+1. UI host sends `ready`.
+2. Elixir replies with `render`.
+3. UI interactions send `intent`.
+4. Elixir updates state and emits minimal `patch` ops.
+5. Rust applies patches on the Slint UI thread.
 
-## Project Layout
+If revisions drift, the host requests resync with `ready`.
 
-- `lib/projection/`: protocol, patching, router, session runtime.
-- `lib/projection_ui/`: screen behavior/state, session supervisor, port owner.
-- `lib/projection_ui/screens/`: Slint app shell/layout/templates.
-- `slint/ui_host/`: Rust UI host, protocol bridge, generated Rust setters/dispatch.
-- `planning/`: local planning notes and milestone docs (gitignored).
+## Included demo
 
-## Quick Start
+This repo includes a runnable demo with:
+
+- `Clock` screen: ticking clock, pause/resume, timezone selection
+- `Devices` screen: list rendering and row-level updates by stable ID
+- Route navigation between screens
+- Recoverable UI fallback when a screen render raises
+
+## Screen model (Elixir)
+
+Screens use `use ProjectionUI, :screen` and define a schema contract:
+
+```elixir
+defmodule ProjectionUI.Screens.Example do
+  use ProjectionUI, :screen
+
+  schema do
+    field :title, :string, default: "Hello"
+    field :count, :integer, default: 0
+    field :meta, :map, default: %{}
+  end
+end
+```
+
+All screens declare `schema do ... end` (empty is allowed).
+
+Supported schema types:
+
+- Scalars: `:string | :bool | :integer | :float`
+- Containers: `:map | :list`
+
+Scalar fields are codegen-bound to Slint properties.  
+Container fields are read via VM lookup callbacks (`vm_text`, `vm_list_*`).
+
+## Getting started
 
 Prerequisites:
 
 - Elixir + Mix
 - Rust + Cargo
 
-Install/build/run:
+Install/build/run demo:
 
 ```bash
 mix deps.get
@@ -65,127 +92,9 @@ mix test
 cargo check --manifest-path slint/ui_host/Cargo.toml
 ```
 
-## Compile Pipeline
+## Repo map
 
-`mix compile` runs custom compilers from `mix.exs`:
-
-1. `mix projection.codegen`
-2. `cargo build` for `slint/ui_host`
-3. copy UI host binary to `priv/ui_host/ui_host`
-
-## Routing DSL
-
-Routes are defined in Elixir with `screen_session` + `screen`:
-
-```elixir
-defmodule Projection.Router do
-  use Projection.Router.DSL
-
-  alias ProjectionUI.Screens.Clock
-  alias ProjectionUI.Screens.Devices
-
-  screen_session :main do
-    screen "/clock", Clock, :show
-    screen "/devices", Devices, :index
-  end
-
-  screen_session :admin do
-    screen "/admin", Clock, :index, as: :admin
-  end
-end
-```
-
-Generated Elixir helpers include:
-
-- `Projection.Router.route_name(:clock)` -> `"clock"`
-- `Projection.Router.route_path(:clock)` -> `"/clock"`
-- `Projection.Router.route_keys/0`
-- `Projection.Router.route_names/0`
-
-## Screen Model
-
-Screen modules use `use ProjectionUI, :screen`.
-All screens must declare `schema do ... end` (it can be empty, but it must exist).
-
-Lifecycle callbacks are optional and have defaults:
-
-- `mount/3`
-- `handle_event/3`
-- `handle_params/2`
-- `handle_info/2`
-- `subscriptions/2`
-- `render/1`
-
-State model:
-
-- `state`: mutable `ProjectionUI.State` (assigns map).
-- `session`: immutable per-session context.
-- `params`: route/navigation parameters.
-- if a screen `render/1` raises, Projection falls back to a built-in `"error"` screen VM instead of crashing the UI session loop.
-
-## Schema DSL
-
-Define typed screen VM fields with `schema do ... end`:
-
-```elixir
-defmodule ProjectionUI.Screens.Example do
-  use ProjectionUI, :screen
-
-  schema do
-    field :title, :string, default: "Hello"
-    field :count, :integer, default: 0
-  end
-end
-```
-
-Supported scalar types are `:string`, `:bool`, `:integer`, and `:float`.
-Container types are also supported: `:map` and `:list`.
-
-## Binding Modes
-
-- Typed scalar bindings: schema fields of `:string | :bool | :integer | :float` are codegen-bound to Slint properties.
-- Container schema fields: schema fields of `:map | :list` are part of the VM contract and read through `vm_text` / `vm_list_*` callbacks.
-
-There are no schemaless screens. Every screen defines a schema contract, even when a screen currently relies on container data and VM lookup callbacks.
-
-## UI Intent Conventions
-
-Generic callback:
-
-- `ui_intent(intent_name, intent_arg)`
-
-Screen contract:
-
-- Handle events in `handle_event/3`; unhandled events can no-op.
-
-Routing callback:
-
-- `navigate(route_name, params_json)`
-
-Payload mapping in Rust:
-
-- empty `intent_arg` -> `%{}`
-- non-empty `intent_arg` -> `%{"arg" => "..."}`
-- `navigate(...)` -> `ui.route.navigate` with `%{"to" => route_name, "params" => parsed_json_object}`
-
-## Generated Artifacts
-
-Generated from Elixir source-of-truth (do not edit manually):
-
-- `slint/ui_host/src/generated/*.rs` from screen schema metadata
-- `slint/ui_host/src/generated/routes.slint` from router metadata
-
-`app.slint` imports the generated Slint routes global from `slint/ui_host/src/generated/routes.slint` so route names are centralized in router definitions.
-
-## Manual Smoke Test
-
-1. Run `mix ui.preview --backend winit --tick-ms 250`.
-2. Confirm window opens and clock updates.
-3. Use top nav to switch `Clock` and `Devices`.
-4. In `Clock`, change timezone and verify text updates.
-5. In `Clock`, click Pause/Resume and verify behavior.
-6. Stop Elixir and verify Slint host exits.
-
-## Planning Docs
-
-Local-only planning docs live under `planning/` and are gitignored.
+- `lib/projection/`: session runtime, protocol, routing, patch logic
+- `lib/projection_ui/`: screen behavior/schema/state and port supervision
+- `lib/projection_ui/screens/`: Slint app shell + screen templates
+- `slint/ui_host/`: Rust host, protocol bridge, generated bindings
