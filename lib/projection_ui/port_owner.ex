@@ -93,6 +93,19 @@ defmodule ProjectionUI.PortOwner do
 
   def handle_info(_msg, state), do: {:noreply, state}
 
+  @impl true
+  def terminate(_reason, %{port: port}) when is_port(port) do
+    try do
+      Port.close(port)
+    catch
+      :error, _ -> :ok
+    end
+
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
+
   defp dispatch_to_port(_envelope, %{port: nil} = state), do: state
 
   defp dispatch_to_port(envelope, %{port: port} = state) do

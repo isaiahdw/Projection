@@ -158,22 +158,43 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("reader loop terminated with error: {err}");
         }
 
-        let _ = slint::quit_event_loop();
+        let quit_result = slint::invoke_from_event_loop(|| {
+            let _ = slint::quit_event_loop();
+        });
+
+        if let Err(err) = quit_result {
+            eprintln!("failed to request UI event loop quit: {err}");
+        }
+
         read_result
     });
 
     ui.run()?;
 
+    // Drop UI first so callback closures release their `tx` clones.
+    drop(ui);
     drop(tx);
 
-    if let Err(err) = writer_handle.join() {
-        eprintln!("writer thread join failed: {err:?}");
+    if reader_handle.is_finished() {
+        match reader_handle.join() {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => eprintln!("reader thread returned error: {err}"),
+            Err(err) => eprintln!("reader thread join failed: {err:?}"),
+        }
+    } else {
+        // Avoid hanging process exit on a blocked stdio read during teardown.
+        eprintln!("reader thread still active during shutdown; skipping join");
     }
 
-    match reader_handle.join() {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => eprintln!("reader thread returned error: {err}"),
-        Err(err) => eprintln!("reader thread join failed: {err:?}"),
+    if writer_handle.is_finished() {
+        match writer_handle.join() {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => eprintln!("writer thread returned error: {err}"),
+            Err(err) => eprintln!("writer thread join failed: {err:?}"),
+        }
+    } else {
+        // Avoid hanging process exit on a blocked stdio write during teardown.
+        eprintln!("writer thread still active during shutdown; skipping join");
     }
 
     Ok(())
