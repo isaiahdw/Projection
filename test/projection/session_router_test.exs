@@ -64,6 +64,7 @@ defmodule Projection.SessionRouterTest do
     assert snapshot.vm.screen.name == "devices"
     assert snapshot.vm.nav.current.name == "devices"
     assert length(snapshot.vm.screen.vm.devices.order) == 2
+    assert is_map(snapshot.vm.screen.vm.devices.by_id)
 
     assert {:ok, []} =
              Session.handle_ui_envelope_sync(session, %{

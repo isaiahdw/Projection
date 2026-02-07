@@ -45,7 +45,7 @@ pub fn apply_patch(
         ui_model_state.screen_id = screen_id;
         Ok(())
     } else {
-        generated::apply_patch(ui, ui_model_state.screen_id, ops)
+        generated::apply_patch(ui, ui_model_state.screen_id, ops, &ui_model_state.vm)
     }
 }
 
@@ -100,6 +100,24 @@ fn apply_global_props(ui: &AppWindow, vm: &Value) {
         .map(|stack| stack.len() > 1)
         .unwrap_or(false);
     ui.set_nav_can_back(nav_can_back);
+
+    let error_title = vm
+        .pointer("/screen/vm/title")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    ui.set_error_title(error_title.into());
+
+    let error_message = vm
+        .pointer("/screen/vm/message")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    ui.set_error_message(error_message.into());
+
+    let error_screen_module = vm
+        .pointer("/screen/vm/screen_module")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    ui.set_error_screen_module(error_screen_module.into());
 }
 
 fn patch_changes_screen(ops: &[PatchOp]) -> bool {

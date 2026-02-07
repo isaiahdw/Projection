@@ -37,7 +37,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         tx.clone(),
         sid.clone(),
         next_intent_id,
-        ui_model_state.clone(),
     );
 
     let writer_handle = thread::spawn(move || writer_loop(rx));
@@ -205,7 +204,6 @@ fn install_callbacks(
     tx: mpsc::Sender<UiEnvelope>,
     sid: String,
     next_intent_id: Arc<AtomicU64>,
-    ui_model_state: Arc<Mutex<patch_apply::UiModelState>>,
 ) {
     let intent_tx = tx.clone();
     let intent_sid = sid.clone();
@@ -255,40 +253,6 @@ fn install_callbacks(
         );
     });
 
-    let text_state = ui_model_state.clone();
-    ui.on_vm_text(move |path, _rev| {
-        let path = path.to_string();
-
-        let Ok(state) = text_state.try_lock() else {
-            return "".into();
-        };
-
-        vm_text(&state.vm, &path).into()
-    });
-
-    let indices_state = ui_model_state.clone();
-    ui.on_vm_list_indices(move |path, _rev| {
-        let path = path.to_string();
-
-        let Ok(state) = indices_state.try_lock() else {
-            return slint::ModelRc::new(slint::VecModel::<i32>::default());
-        };
-
-        let indices = vm_list_indices(&state.vm, &path);
-        let model = slint::VecModel::from(indices);
-        slint::ModelRc::new(model)
-    });
-
-    ui.on_vm_list_row_text(move |path, index, field, _rev| {
-        let path = path.to_string();
-        let field = field.to_string();
-
-        let Ok(state) = ui_model_state.try_lock() else {
-            return "".into();
-        };
-
-        vm_list_row_text(&state.vm, &path, index, &field).into()
-    });
 }
 
 fn send_intent(
@@ -325,78 +289,5 @@ fn parse_params_json(raw: &str) -> Value {
         Ok(Value::Object(map)) => Value::Object(map),
         Ok(_) => json!({}),
         Err(_) => json!({}),
-    }
-}
-
-fn vm_text(vm: &Value, path: &str) -> String {
-    vm.pointer(path)
-        .map(value_to_text)
-        .unwrap_or_else(String::new)
-}
-
-fn vm_list_indices(vm: &Value, path: &str) -> Vec<i32> {
-    let list_value = vm.pointer(path);
-
-    let count = match list_value {
-        Some(Value::Object(object)) => object
-            .get("order")
-            .and_then(Value::as_array)
-            .map(|order| order.len())
-            .unwrap_or(0),
-        Some(Value::Array(items)) => items.len(),
-        _ => 0,
-    };
-
-    (0..count)
-        .filter_map(|index| i32::try_from(index).ok())
-        .collect()
-}
-
-fn vm_list_row_text(vm: &Value, path: &str, index: i32, field: &str) -> String {
-    if index < 0 {
-        return String::new();
-    }
-
-    let index = index as usize;
-    let Some(list_value) = vm.pointer(path) else {
-        return String::new();
-    };
-
-    match list_value {
-        Value::Object(object) => {
-            let Some(order) = object.get("order").and_then(Value::as_array) else {
-                return String::new();
-            };
-
-            let Some(id) = order.get(index).and_then(Value::as_str) else {
-                return String::new();
-            };
-
-            object
-                .get("by_id")
-                .and_then(Value::as_object)
-                .and_then(|by_id| by_id.get(id))
-                .and_then(Value::as_object)
-                .and_then(|row| row.get(field))
-                .map(value_to_text)
-                .unwrap_or_else(String::new)
-        }
-        Value::Array(items) => items
-            .get(index)
-            .and_then(Value::as_object)
-            .and_then(|row| row.get(field))
-            .map(value_to_text)
-            .unwrap_or_else(String::new),
-        _ => String::new(),
-    }
-}
-
-fn value_to_text(value: &Value) -> String {
-    match value {
-        Value::String(text) => text.clone(),
-        Value::Bool(flag) => flag.to_string(),
-        Value::Number(number) => number.to_string(),
-        Value::Null => String::new(),
-        other => other.to_string(),
     }
 }
