@@ -6,6 +6,10 @@ defmodule Projection.M3ListPatchTest do
   defmodule DevicesScreen do
     use ProjectionUI, :screen
 
+    schema do
+      field(:devices, :map, default: %{order: [], by_id: %{}})
+    end
+
     @impl true
     def mount(_params, _session, state) do
       order = Enum.map(1..500, &"dev-#{&1}")

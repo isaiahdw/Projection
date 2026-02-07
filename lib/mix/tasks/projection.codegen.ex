@@ -8,7 +8,8 @@ defmodule Mix.Tasks.Projection.Codegen do
   `__projection_schema__/0` metadata defined in `ProjectionUI.Screens.*` modules.
   """
 
-  @supported_types [:string, :bool, :integer, :float]
+  @supported_schema_types [:string, :bool, :integer, :float, :map, :list]
+  @supported_codegen_types [:string, :bool, :integer, :float]
 
   @impl Mix.Task
   def run(_args) do
@@ -20,7 +21,6 @@ defmodule Mix.Tasks.Projection.Codegen do
     specs =
       discover_screen_modules()
       |> Enum.map(&build_screen_spec/1)
-      |> Enum.filter(fn spec -> spec.fields != [] end)
       |> Enum.sort_by(& &1.module_name)
 
     generated_dir = Path.join(File.cwd!(), "slint/ui_host/src/generated")
@@ -108,17 +108,19 @@ defmodule Mix.Tasks.Projection.Codegen do
       |> Enum.map(&normalize_field!/1)
       |> Enum.sort_by(&Atom.to_string(&1.name))
 
+    codegen_fields = Enum.filter(fields, &(&1.type in @supported_codegen_types))
+
     %{
       module: module,
       module_name: Atom.to_string(module),
       screen_name: module |> Module.split() |> List.last() |> Macro.underscore(),
       file_name: module |> Module.split() |> List.last() |> Macro.underscore(),
-      fields: fields
+      fields: codegen_fields
     }
   end
 
   defp normalize_field!(%{name: name, type: type, default: default})
-       when is_atom(name) and type in @supported_types do
+       when is_atom(name) and type in @supported_schema_types do
     %{name: name, type: type, default: default}
   end
 
@@ -253,88 +255,115 @@ defmodule Mix.Tasks.Projection.Codegen do
   end
 
   defp render_screen_module(spec) do
-    render_field_setters =
-      spec.fields
-      |> Enum.map_join("\n", fn field ->
-        """
-        set_#{field.name}_from_vm(ui, vm)?;
-        """
-      end)
+    if spec.fields == [] do
+      render_empty_screen_module()
+    else
+      render_field_setters =
+        spec.fields
+        |> Enum.map_join("\n", fn field ->
+          """
+          set_#{field.name}_from_vm(ui, vm)?;
+          """
+        end)
 
-    patch_match_arms =
-      spec.fields
-      |> Enum.map_join("\n", fn field ->
-        top_path = "/" <> Atom.to_string(field.name)
-        nested_path = "/screen/vm/" <> Atom.to_string(field.name)
+      patch_match_arms =
+        spec.fields
+        |> Enum.map_join("\n", fn field ->
+          top_path = "/" <> Atom.to_string(field.name)
+          nested_path = "/screen/vm/" <> Atom.to_string(field.name)
 
-        """
-                    "#{top_path}" | "#{nested_path}" => set_#{field.name}_from_value(ui, path, value)?,
-        """
-      end)
+          """
+                      "#{top_path}" | "#{nested_path}" => set_#{field.name}_from_value(ui, path, value)?,
+          """
+        end)
 
-    remove_match_arms =
-      spec.fields
-      |> Enum.map_join("\n", fn field ->
-        top_path = "/" <> Atom.to_string(field.name)
-        nested_path = "/screen/vm/" <> Atom.to_string(field.name)
+      remove_match_arms =
+        spec.fields
+        |> Enum.map_join("\n", fn field ->
+          top_path = "/" <> Atom.to_string(field.name)
+          nested_path = "/screen/vm/" <> Atom.to_string(field.name)
 
-        """
-                    "#{top_path}" | "#{nested_path}" => set_#{field.name}_default(ui),
-        """
-      end)
+          """
+                      "#{top_path}" | "#{nested_path}" => set_#{field.name}_default(ui),
+          """
+        end)
 
-    field_helpers =
-      spec.fields
-      |> Enum.map_join("\n", &render_field_helper/1)
+      field_helpers =
+        spec.fields
+        |> Enum.map_join("\n", &render_field_helper/1)
 
-    parse_helpers =
-      spec.fields
-      |> Enum.map(& &1.type)
-      |> Enum.uniq()
-      |> Enum.sort()
-      |> Enum.map_join("\n", &render_parse_helper/1)
+      parse_helpers =
+        spec.fields
+        |> Enum.map(& &1.type)
+        |> Enum.uniq()
+        |> Enum.sort()
+        |> Enum.map_join("\n", &render_parse_helper/1)
 
+      """
+      use crate::AppWindow;
+      use crate::protocol::PatchOp;
+      use serde_json::Value;
+
+      pub fn apply_render(ui: &AppWindow, vm: &Value) -> Result<(), String> {
+      #{render_field_setters}
+          bump_vm_rev(ui);
+          Ok(())
+      }
+
+      pub fn apply_patch(ui: &AppWindow, ops: &[PatchOp]) -> Result<(), String> {
+          for op in ops {
+              match op {
+                  PatchOp::Replace { path, value } | PatchOp::Add { path, value } => {
+                      match path.as_str() {
+      #{patch_match_arms}
+                          _ => {}
+                      }
+                  }
+                  PatchOp::Remove { path } => {
+                      match path.as_str() {
+      #{remove_match_arms}
+                          _ => {}
+                      }
+                  }
+              }
+          }
+
+          bump_vm_rev(ui);
+          Ok(())
+      }
+
+      #{field_helpers}
+
+      fn bump_vm_rev(ui: &AppWindow) {
+          let next = ui.get_vm_rev().wrapping_add(1);
+          ui.set_vm_rev(next);
+      }
+
+      #{parse_helpers}
+      """
+    end
+  end
+
+  defp render_empty_screen_module do
     """
     use crate::AppWindow;
     use crate::protocol::PatchOp;
     use serde_json::Value;
 
-    pub fn apply_render(ui: &AppWindow, vm: &Value) -> Result<(), String> {
-    #{render_field_setters}
+    pub fn apply_render(ui: &AppWindow, _vm: &Value) -> Result<(), String> {
         bump_vm_rev(ui);
         Ok(())
     }
 
-    pub fn apply_patch(ui: &AppWindow, ops: &[PatchOp]) -> Result<(), String> {
-        for op in ops {
-            match op {
-                PatchOp::Replace { path, value } | PatchOp::Add { path, value } => {
-                    match path.as_str() {
-    #{patch_match_arms}
-                        _ => {}
-                    }
-                }
-                PatchOp::Remove { path } => {
-                    match path.as_str() {
-    #{remove_match_arms}
-                        _ => {}
-                    }
-                }
-            }
-        }
-
+    pub fn apply_patch(ui: &AppWindow, _ops: &[PatchOp]) -> Result<(), String> {
         bump_vm_rev(ui);
         Ok(())
     }
-
-    #{field_helpers}
 
     fn bump_vm_rev(ui: &AppWindow) {
         let next = ui.get_vm_rev().wrapping_add(1);
         ui.set_vm_rev(next);
     }
-
-    #{parse_helpers}
     """
   end
 

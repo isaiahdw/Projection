@@ -2,33 +2,40 @@ defmodule ProjectionUI.Schema do
   @moduledoc """
   Typed VM schema DSL for screen modules.
 
-  Supported scalar types:
+  Supported types:
   - `:string`
   - `:bool`
   - `:integer`
   - `:float`
+  - `:map`
+  - `:list`
   """
 
-  @allowed_types [:string, :bool, :integer, :float]
+  @allowed_types [:string, :bool, :integer, :float, :map, :list]
 
   defmacro __using__(_opts) do
     quote do
       import ProjectionUI.Schema, only: [schema: 1, field: 2, field: 3]
 
       Module.register_attribute(__MODULE__, :projection_schema_fields, accumulate: true)
+      Module.register_attribute(__MODULE__, :projection_schema_declared, persist: false)
+      @projection_schema_declared false
       @before_compile ProjectionUI.Schema
     end
   end
 
   defmacro schema(do: block) do
-    block
+    quote do
+      @projection_schema_declared true
+      unquote(block)
+    end
   end
 
   defmacro field(name, type, opts \\ []) do
     caller = __CALLER__
     expanded_name = Macro.expand(name, caller)
     expanded_type = Macro.expand(type, caller)
-    expanded_opts = Macro.expand(opts, caller)
+    expanded_opts = expand_literal!(opts, caller, "field options")
 
     validate_name!(expanded_name, caller)
     validate_type!(expanded_type, caller)
@@ -51,6 +58,8 @@ defmodule ProjectionUI.Schema do
   end
 
   defmacro __before_compile__(env) do
+    ensure_schema_declared!(env)
+
     normalized_schema =
       env.module
       |> Module.get_attribute(:projection_schema_fields)
@@ -141,6 +150,32 @@ defmodule ProjectionUI.Schema do
     end
   end
 
+  defp expand_literal!(quoted, caller, label) do
+    expanded = Macro.expand(quoted, caller)
+
+    if Macro.quoted_literal?(expanded) do
+      {value, _binding} = Code.eval_quoted(expanded, [], caller)
+      value
+    else
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description: "#{label} must be compile-time literals, got: #{Macro.to_string(quoted)}"
+    end
+  end
+
+  defp ensure_schema_declared!(env) do
+    declared? = Module.get_attribute(env.module, :projection_schema_declared)
+
+    unless declared? do
+      raise CompileError,
+        file: env.file,
+        line: env.line,
+        description:
+          "#{inspect(env.module)} must declare `schema do ... end` (it can be empty if needed)"
+    end
+  end
+
   defp validate_name!(name, _caller) when is_atom(name), do: :ok
 
   defp validate_name!(name, caller) do
@@ -183,9 +218,13 @@ defmodule ProjectionUI.Schema do
   defp value_matches_type?(:bool, value), do: is_boolean(value)
   defp value_matches_type?(:integer, value), do: is_integer(value)
   defp value_matches_type?(:float, value), do: is_float(value)
+  defp value_matches_type?(:map, value), do: is_map(value)
+  defp value_matches_type?(:list, value), do: is_list(value)
 
   defp default_for_type(:string), do: ""
   defp default_for_type(:bool), do: false
   defp default_for_type(:integer), do: 0
   defp default_for_type(:float), do: 0.0
+  defp default_for_type(:map), do: %{}
+  defp default_for_type(:list), do: []
 end

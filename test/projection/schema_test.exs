@@ -34,6 +34,18 @@ defmodule Projection.SchemaTest do
     end
   end
 
+  defmodule ContainerScreen do
+    use ProjectionUI, :screen
+
+    schema do
+      field(:devices, :map, default: %{order: [], by_id: %{}})
+      field(:tabs, :list, default: ["clock"])
+    end
+
+    @impl true
+    def render(assigns), do: assigns
+  end
+
   test "schema/0 returns defaults and metadata is normalized" do
     assert DemoScreen.schema() == %{
              count: 7,
@@ -52,6 +64,35 @@ defmodule Projection.SchemaTest do
 
   test "validate_render!/1 validates type and key contract" do
     assert :ok == Schema.validate_render!(DemoScreen)
+  end
+
+  test "schema supports map and list fields" do
+    assert ContainerScreen.schema() == %{
+             devices: %{order: [], by_id: %{}},
+             tabs: ["clock"]
+           }
+
+    assert ContainerScreen.__projection_schema__() == [
+             %{name: :devices, type: :map, default: %{order: [], by_id: %{}}},
+             %{name: :tabs, type: :list, default: ["clock"]}
+           ]
+
+    assert :ok == Schema.validate_render!(ContainerScreen)
+  end
+
+  test "screen modules must declare schema do/end" do
+    module_name = :"MissingSchema#{System.unique_integer([:positive])}"
+    module = Module.concat([Projection, module_name])
+
+    source = """
+    defmodule #{inspect(module)} do
+      use ProjectionUI, :screen
+    end
+    """
+
+    assert_raise CompileError, ~r/must declare `schema do \.\.\. end`/, fn ->
+      Code.compile_string(source)
+    end
   end
 
   test "session seeds mount state from schema defaults" do

@@ -6,6 +6,10 @@ defmodule Projection.SessionScreenControllerTest do
   defmodule ThermostatScreen do
     use ProjectionUI, :screen
 
+    schema do
+      field(:temperature, :integer, default: 0)
+    end
+
     @impl true
     def mount(_params, session, state) do
       base_temperature = Map.get(session, "base_temperature", 70)
@@ -30,6 +34,10 @@ defmodule Projection.SessionScreenControllerTest do
 
   defmodule LegacyScreen do
     use ProjectionUI, :screen
+
+    schema do
+      field(:temperature, :integer, default: 0)
+    end
 
     @impl true
     def mount(_params, _session, state) do

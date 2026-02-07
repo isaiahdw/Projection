@@ -5,6 +5,10 @@ defmodule ProjectionUI.Screens.Devices do
 
   use ProjectionUI, :screen
 
+  schema do
+    field(:devices, :map, default: %{order: [], by_id: %{}})
+  end
+
   @impl true
   def mount(params, _session, state) do
     total = Map.get(params, "count", 25)
