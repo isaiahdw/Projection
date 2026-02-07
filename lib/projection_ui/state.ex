@@ -5,26 +5,51 @@ defmodule ProjectionUI.State do
   This is not a network socket. It is a small container for screen assigns.
   """
 
-  @enforce_keys [:assigns]
-  defstruct assigns: %{}
+  @missing_key :__projection_missing_key__
+
+  @enforce_keys [:assigns, :changed]
+  defstruct assigns: %{}, changed: MapSet.new()
 
   @type t :: %__MODULE__{
-          assigns: map()
+          assigns: map(),
+          changed: MapSet.t(atom())
         }
 
   @spec new(map()) :: t()
   def new(assigns \\ %{}) when is_map(assigns) do
-    %__MODULE__{assigns: assigns}
+    %__MODULE__{assigns: assigns, changed: MapSet.new()}
   end
 
   @spec assign(t(), atom(), any()) :: t()
   def assign(%__MODULE__{} = state, key, value) when is_atom(key) do
-    %{state | assigns: Map.put(state.assigns, key, value)}
+    current = Map.get(state.assigns, key, @missing_key)
+
+    if current === value do
+      state
+    else
+      %{
+        state
+        | assigns: Map.put(state.assigns, key, value),
+          changed: MapSet.put(state.changed, key)
+      }
+    end
   end
 
   @spec update(t(), atom(), (any() -> any())) :: t()
   def update(%__MODULE__{} = state, key, fun) when is_atom(key) and is_function(fun, 1) do
     current = Map.get(state.assigns, key)
     assign(state, key, fun.(current))
+  end
+
+  @spec changed_fields(t()) :: [atom()]
+  def changed_fields(%__MODULE__{} = state) do
+    state.changed
+    |> MapSet.to_list()
+    |> Enum.sort()
+  end
+
+  @spec clear_changed(t()) :: t()
+  def clear_changed(%__MODULE__{} = state) do
+    %{state | changed: MapSet.new()}
   end
 end

@@ -384,9 +384,10 @@ defmodule Projection.Session do
   end
 
   defp apply_screen_update(state, %State{} = screen_state, ack) do
-    next_state = %{state | screen_state: screen_state}
+    changed_fields = State.changed_fields(screen_state)
+    next_state = %{state | screen_state: State.clear_changed(screen_state)}
     next_vm = render_vm(next_state)
-    ops = vm_patch_ops(state.vm, next_vm)
+    ops = vm_patch_ops(state.vm, next_vm, changed_fields, next_state.router)
 
     next_state = %{next_state | vm: next_vm}
 
@@ -408,8 +409,105 @@ defmodule Projection.Session do
     end
   end
 
+  defp vm_patch_ops(previous_vm, next_vm, _changed_fields, _router) when previous_vm == next_vm do
+    []
+  end
+
+  defp vm_patch_ops(previous_vm, next_vm, [], _router) do
+    vm_patch_ops(previous_vm, next_vm)
+  end
+
+  defp vm_patch_ops(previous_vm, next_vm, changed_fields, nil) do
+    changed_fields
+    |> Enum.map(&[to_string(&1)])
+    |> Enum.flat_map(&diff_at_path(previous_vm, next_vm, &1))
+  end
+
+  defp vm_patch_ops(previous_vm, next_vm, changed_fields, _router) do
+    global_paths = [
+      ["app"],
+      ["nav"],
+      ["screen", "name"],
+      ["screen", "action"]
+    ]
+
+    screen_vm_paths =
+      if screen_identity_changed?(previous_vm, next_vm) do
+        [["screen", "vm"]]
+      else
+        changed_fields
+        |> Enum.map(&to_string/1)
+        |> Enum.sort()
+        |> Enum.map(&["screen", "vm", &1])
+      end
+
+    (global_paths ++ screen_vm_paths)
+    |> Enum.flat_map(&diff_at_path(previous_vm, next_vm, &1))
+  end
+
   defp vm_patch_ops(previous_vm, next_vm) when is_map(previous_vm) and is_map(next_vm) do
     diff_map(previous_vm, next_vm, [])
+  end
+
+  defp diff_at_path(previous_vm, next_vm, path_tokens) when is_list(path_tokens) do
+    path = Patch.pointer(path_tokens)
+
+    case {path_value(previous_vm, path_tokens), path_value(next_vm, path_tokens)} do
+      {{:ok, previous_value}, {:ok, current_value}} ->
+        diff_value(previous_value, current_value, path_tokens)
+
+      {:error, {:ok, current_value}} ->
+        [Patch.add(path, current_value)]
+
+      {{:ok, _previous_value}, :error} ->
+        [Patch.remove(path)]
+
+      {:error, :error} ->
+        []
+    end
+  end
+
+  defp screen_identity_changed?(previous_vm, next_vm) do
+    path_value(previous_vm, ["screen", "name"]) != path_value(next_vm, ["screen", "name"]) or
+      path_value(previous_vm, ["screen", "action"]) !=
+        path_value(next_vm, ["screen", "action"])
+  end
+
+  defp path_value(value, []), do: {:ok, value}
+
+  defp path_value(%{} = map, [token | rest]) do
+    with {:ok, key} <- resolve_map_key(map, token),
+         {:ok, child} <- Map.fetch(map, key) do
+      path_value(child, rest)
+    else
+      :error -> :error
+    end
+  end
+
+  defp path_value(_value, _tokens), do: :error
+
+  defp resolve_map_key(map, token) when is_binary(token) do
+    cond do
+      Map.has_key?(map, token) ->
+        {:ok, token}
+
+      true ->
+        case maybe_existing_atom(token) do
+          {:ok, atom_key} ->
+            if Map.has_key?(map, atom_key), do: {:ok, atom_key}, else: :error
+
+          _ ->
+            :error
+        end
+    end
+  end
+
+  defp maybe_existing_atom(token) when is_binary(token) do
+    try do
+      {:ok, String.to_existing_atom(token)}
+    rescue
+      ArgumentError -> :error
+    end
   end
 
   defp diff_map(previous, current, tokens) when is_map(previous) and is_map(current) do
