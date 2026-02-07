@@ -26,6 +26,11 @@ defmodule Projection.Session do
           sid: String.t() | nil,
           rev: non_neg_integer(),
           vm: map(),
+          batch_window_ms: non_neg_integer(),
+          max_pending_ops: pos_integer(),
+          pending_patch_ops: [map()],
+          pending_ack: non_neg_integer() | nil,
+          patch_flush_ref: {reference(), reference()} | nil,
           tick_ms: pos_integer() | nil,
           tick_ref: reference() | nil,
           port_owner: GenServer.server() | nil,
@@ -52,6 +57,8 @@ defmodule Projection.Session do
     * `:screen_module` — screen module when running without a router
     * `:screen_params` — params passed to `c:ProjectionUI.Screen.mount/3`
     * `:screen_session` — session map passed to `c:ProjectionUI.Screen.mount/3`
+    * `:batch_window_ms` — patch batch flush window in milliseconds (default `16`)
+    * `:max_pending_ops` — max coalesced ops kept before immediate flush (default `128`)
     * `:tick_ms` — interval for `:tick` messages (nil disables)
     * `:port_owner` — name or pid of the `ProjectionUI.PortOwner` for outbound envelopes
     * `:subscription_hook` — `(action, topic -> any())` callback for pub/sub
@@ -105,6 +112,11 @@ defmodule Projection.Session do
         sid: Keyword.get(opts, :sid),
         rev: 0,
         vm: %{},
+        batch_window_ms: normalize_batch_window_ms(Keyword.get(opts, :batch_window_ms, 16)),
+        max_pending_ops: normalize_max_pending_ops(Keyword.get(opts, :max_pending_ops, 128)),
+        pending_patch_ops: [],
+        pending_ack: nil,
+        patch_flush_ref: nil,
         tick_ms: normalize_tick_ms(Keyword.get(opts, :tick_ms)),
         tick_ref: nil,
         port_owner: Keyword.get(opts, :port_owner),
@@ -145,11 +157,20 @@ defmodule Projection.Session do
     {:noreply, maybe_schedule_tick(next_state)}
   end
 
+  def handle_info({:flush_patch_batch, token}, %{patch_flush_ref: {token, _timer_ref}} = state) do
+    state = %{state | patch_flush_ref: nil}
+    {:noreply, flush_pending_patch_batch(state)}
+  end
+
+  def handle_info({:flush_patch_batch, _token}, state), do: {:noreply, state}
+
   @impl true
   def handle_info(_message, state), do: {:noreply, state}
 
   @impl true
   def terminate(_reason, state) do
+    cancel_patch_flush_timer(state.patch_flush_ref)
+
     state
     |> Map.get(:subscriptions, MapSet.new())
     |> Enum.each(fn topic -> dispatch_subscription(state, :unsubscribe, topic) end)
@@ -160,6 +181,7 @@ defmodule Projection.Session do
   defp process_ui_envelope(envelope, state) do
     case envelope do
       %{"t" => "ready", "sid" => incoming_sid} when is_binary(incoming_sid) ->
+        state = clear_pending_patch_batch(state)
         sid = ensure_stable_sid(state.sid, incoming_sid)
         rev = state.rev + 1
         render = Protocol.render_envelope(sid, rev, state.vm)
@@ -488,14 +510,8 @@ defmodule Projection.Session do
       {nil, _ops} ->
         next_state
 
-      {sid, _ops} ->
-        rev = state.rev + 1
-        patch_opts = if is_nil(ack), do: [], else: [ack: ack]
-        patch = Protocol.patch_envelope(sid, rev, ops, patch_opts)
-
-        next_state
-        |> Map.put(:rev, rev)
-        |> dispatch_outbound([patch])
+      {_sid, _ops} ->
+        enqueue_patch_batch(next_state, ops, ack)
     end
   end
 
@@ -730,8 +746,106 @@ defmodule Projection.Session do
     %{state | tick_ref: ref}
   end
 
+  defp enqueue_patch_batch(state, ops, ack) when is_list(ops) do
+    pending_ops = coalesce_patch_ops(state.pending_patch_ops ++ ops)
+    pending_ack = merge_patch_ack(state.pending_ack, ack)
+    next_state = %{state | pending_patch_ops: pending_ops, pending_ack: pending_ack}
+
+    cond do
+      pending_ops == [] ->
+        clear_pending_patch_batch(next_state)
+
+      next_state.batch_window_ms == 0 ->
+        flush_pending_patch_batch(next_state)
+
+      length(pending_ops) >= next_state.max_pending_ops ->
+        flush_pending_patch_batch(next_state)
+
+      true ->
+        schedule_patch_batch_flush(next_state)
+    end
+  end
+
+  defp flush_pending_patch_batch(%{pending_patch_ops: []} = state) do
+    clear_pending_patch_batch(state)
+  end
+
+  defp flush_pending_patch_batch(%{sid: nil} = state) do
+    clear_pending_patch_batch(state)
+  end
+
+  defp flush_pending_patch_batch(%{sid: sid} = state) when is_binary(sid) do
+    rev = state.rev + 1
+    patch_opts = if is_nil(state.pending_ack), do: [], else: [ack: state.pending_ack]
+    patch = Protocol.patch_envelope(sid, rev, state.pending_patch_ops, patch_opts)
+
+    state
+    |> clear_pending_patch_batch()
+    |> Map.put(:rev, rev)
+    |> dispatch_outbound([patch])
+  end
+
+  defp schedule_patch_batch_flush(
+         %{patch_flush_ref: nil, batch_window_ms: batch_window_ms} = state
+       ) do
+    token = make_ref()
+    timer_ref = Process.send_after(self(), {:flush_patch_batch, token}, batch_window_ms)
+    %{state | patch_flush_ref: {token, timer_ref}}
+  end
+
+  defp schedule_patch_batch_flush(state), do: state
+
+  defp clear_pending_patch_batch(state) do
+    cancel_patch_flush_timer(state.patch_flush_ref)
+    %{state | pending_patch_ops: [], pending_ack: nil, patch_flush_ref: nil}
+  end
+
+  defp cancel_patch_flush_timer({_token, timer_ref}) when is_reference(timer_ref) do
+    _ = Process.cancel_timer(timer_ref)
+    :ok
+  end
+
+  defp cancel_patch_flush_timer(_ref), do: :ok
+
+  defp coalesce_patch_ops(ops) when is_list(ops) do
+    {paths, _seen, latest_by_path} =
+      Enum.reduce(ops, {[], MapSet.new(), %{}}, fn op, {paths, seen, latest_by_path} ->
+        case patch_op_path(op) do
+          path when is_binary(path) ->
+            next_paths = if MapSet.member?(seen, path), do: paths, else: [path | paths]
+            next_seen = MapSet.put(seen, path)
+            next_latest_by_path = Map.put(latest_by_path, path, op)
+            {next_paths, next_seen, next_latest_by_path}
+
+          _ ->
+            {paths, seen, latest_by_path}
+        end
+      end)
+
+    paths
+    |> Enum.reverse()
+    |> Enum.map(&Map.fetch!(latest_by_path, &1))
+  end
+
+  defp patch_op_path(%{"path" => path}) when is_binary(path), do: path
+  defp patch_op_path(_op), do: nil
+
+  defp merge_patch_ack(nil, nil), do: nil
+  defp merge_patch_ack(ack, nil), do: ack
+  defp merge_patch_ack(nil, ack), do: ack
+  defp merge_patch_ack(left, right), do: max(left, right)
+
   defp normalize_tick_ms(tick_ms) when is_integer(tick_ms) and tick_ms > 0, do: tick_ms
   defp normalize_tick_ms(_tick_ms), do: nil
+
+  defp normalize_batch_window_ms(ms) when is_integer(ms) and ms >= 0, do: ms
+  defp normalize_batch_window_ms(_ms), do: 16
+
+  defp normalize_max_pending_ops(max_pending_ops)
+       when is_integer(max_pending_ops) and max_pending_ops > 0,
+       do: max_pending_ops
+
+  defp normalize_max_pending_ops(_max_pending_ops), do: 128
 
   defp normalize_screen_session(session) when is_map(session), do: session
 

@@ -33,12 +33,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let sid = std::env::var("PROJECTION_SID").unwrap_or_else(|_| "S1".to_string());
     let resync_tx = tx.clone();
     let resync_sid = sid.clone();
-    install_callbacks(
-        &ui,
-        tx.clone(),
-        sid.clone(),
-        next_intent_id,
-    );
+    install_callbacks(&ui, tx.clone(), sid.clone(), next_intent_id);
 
     let writer_handle = thread::spawn(move || writer_loop(rx));
 
@@ -96,7 +91,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 });
             }
             ElixirEnvelope::Patch { sid, rev, ack, ops } => {
-                let _ = ack;
                 let tx_for_resync = resync_tx.clone();
                 let sid_for_resync = resync_sid.clone();
                 let state_for_patch = shared_state.clone();
@@ -142,6 +136,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     patch_apply::mark_applied_rev(&mut state, rev);
+                    patch_apply::mark_applied_ack(&mut state, ack);
                 });
             }
             ElixirEnvelope::Error {
@@ -279,7 +274,6 @@ fn install_callbacks(
             payload,
         );
     });
-
 }
 
 fn send_intent(

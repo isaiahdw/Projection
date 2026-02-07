@@ -9,6 +9,7 @@ pub struct UiModelState {
     pub screen_id: ScreenId,
     pub vm: Value,
     pub last_rev: Option<u64>,
+    pub last_ack: Option<u64>,
 }
 
 impl Default for UiModelState {
@@ -17,6 +18,7 @@ impl Default for UiModelState {
             screen_id: ScreenId::default(),
             vm: Value::Object(serde_json::Map::new()),
             last_rev: None,
+            last_ack: None,
         }
     }
 }
@@ -76,6 +78,14 @@ pub fn validate_patch_rev(state: &UiModelState, rev: u64) -> Result<(), String> 
 
 pub fn mark_applied_rev(state: &mut UiModelState, rev: u64) {
     state.last_rev = Some(rev);
+}
+
+pub fn mark_applied_ack(state: &mut UiModelState, ack: Option<u64>) {
+    match (state.last_ack, ack) {
+        (_current, None) => {}
+        (None, Some(next_ack)) => state.last_ack = Some(next_ack),
+        (Some(current_ack), Some(next_ack)) => state.last_ack = Some(current_ack.max(next_ack)),
+    }
 }
 
 pub fn reset_for_resync(state: &mut UiModelState) {
@@ -330,5 +340,21 @@ mod tests {
         mark_applied_rev(&mut state, 3);
         assert!(validate_patch_rev(&state, 4).is_ok());
         assert!(validate_patch_rev(&state, 5).is_err());
+    }
+
+    #[test]
+    fn ack_tracking_uses_monotonic_high_watermark() {
+        let mut state = UiModelState::default();
+        mark_applied_ack(&mut state, None);
+        assert_eq!(state.last_ack, None);
+
+        mark_applied_ack(&mut state, Some(5));
+        assert_eq!(state.last_ack, Some(5));
+
+        mark_applied_ack(&mut state, Some(3));
+        assert_eq!(state.last_ack, Some(5));
+
+        mark_applied_ack(&mut state, Some(8));
+        assert_eq!(state.last_ack, Some(8));
     }
 }
