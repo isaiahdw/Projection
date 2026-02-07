@@ -87,6 +87,8 @@ This means the Rust host never contains domain logic or hand-written property bi
 
 The generated Slint layer includes a `screen_host.slint` and root `app.slint`, so adding a new screen route no longer requires manually editing root Slint imports or screen switch branches.
 
+Note: the demo clock screen uses fixed timezone offsets and intentionally does not handle DST.
+
 ### Ephemeral UI state
 
 Projection draws a clear line between authoritative state and ephemeral UI state:

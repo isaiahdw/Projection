@@ -74,7 +74,7 @@ defmodule Projection.Session do
 
   This is the primary entry point used by `ProjectionUI.HostBridge` to forward
   `ready` and `intent` envelopes from the host. Outbound responses (renders,
-  patches) are dispatched back through the port owner.
+  patches) are dispatched back through the host bridge.
   """
   @spec handle_ui_envelope(GenServer.server(), map()) :: :ok
   def handle_ui_envelope(session, envelope) when is_map(envelope) do
@@ -119,7 +119,7 @@ defmodule Projection.Session do
         patch_flush_ref: nil,
         tick_ms: normalize_tick_ms(Keyword.get(opts, :tick_ms)),
         tick_ref: nil,
-        host_bridge: Keyword.get(opts, :host_bridge, Keyword.get(opts, :port_owner)),
+        host_bridge: Keyword.get(opts, :host_bridge),
         router: router,
         nav: nav,
         app_title: app_title,

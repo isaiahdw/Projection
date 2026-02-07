@@ -216,9 +216,16 @@ defmodule Mix.Tasks.Projection.Codegen do
       |> Enum.map(&normalize_field!/1)
       |> Enum.sort_by(&Atom.to_string(&1.name))
 
+    unsupported_codegen_fields =
+      fields
+      |> Enum.reject(&(&1.type in @supported_codegen_types))
+
+    if unsupported_codegen_fields != [] do
+      raise_codegen_unsupported_fields!(module, unsupported_codegen_fields)
+    end
+
     codegen_fields =
       fields
-      |> Enum.filter(&(&1.type in @supported_codegen_types))
       |> Enum.flat_map(&expand_codegen_field/1)
 
     %{
@@ -231,6 +238,17 @@ defmodule Mix.Tasks.Projection.Codegen do
       global_name: camelize(screen_name) <> "State",
       state_file: "#{screen_name}_state.slint"
     }
+  end
+
+  defp raise_codegen_unsupported_fields!(module, fields) do
+    field_descriptions =
+      fields
+      |> Enum.map(fn field -> "#{field.name}: #{inspect(field.type)}" end)
+      |> Enum.join(", ")
+
+    raise ArgumentError,
+          "projection.codegen does not support these schema field types in #{inspect(module)}: " <>
+            "#{field_descriptions}. Use typed scalars, :list, :id_table, or `component` fields."
   end
 
   defp normalize_field!(%{name: name, type: type, default: default, opts: opts})

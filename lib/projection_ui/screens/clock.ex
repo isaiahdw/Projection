@@ -7,6 +7,7 @@ defmodule ProjectionUI.Screens.Clock do
 
   use ProjectionUI, :screen
 
+  # Demo-only fixed offsets. This intentionally ignores DST and historical timezone rules.
   @timezone_offsets %{
     "UTC" => 0,
     "America/New_York" => -5 * 60 * 60,

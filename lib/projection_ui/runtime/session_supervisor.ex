@@ -28,13 +28,7 @@ defmodule ProjectionUI.SessionSupervisor do
   @impl true
   def init(opts) do
     session_name = Keyword.get(opts, :session_name, Projection.Session)
-
-    host_bridge_name =
-      Keyword.get(
-        opts,
-        :host_bridge_name,
-        Keyword.get(opts, :port_owner_name, ProjectionUI.HostBridge)
-      )
+    host_bridge_name = Keyword.get(opts, :host_bridge_name, ProjectionUI.HostBridge)
 
     router = Keyword.get(opts, :router)
     route = Keyword.get(opts, :route)
