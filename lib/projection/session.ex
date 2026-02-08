@@ -18,8 +18,14 @@ defmodule Projection.Session do
   alias Projection.Patch
   alias Projection.Protocol
   alias Projection.Router
+  alias Projection.Telemetry
   alias ProjectionUI.HostBridge
   alias ProjectionUI.State
+
+  @event_intent_received [:session, :intent, :received]
+  @event_render_complete [:session, :render, :complete]
+  @event_patch_sent [:session, :patch, :sent]
+  @event_error [:session, :error]
 
   @typedoc "Internal GenServer state for a running session."
   @type state :: %{
@@ -132,43 +138,61 @@ defmodule Projection.Session do
       }
       |> sync_subscriptions()
 
-    {:ok, %{state | vm: initial_vm(state)}}
+    state = %{state | vm: initial_vm(state)}
+    put_logger_metadata(state)
+    {:ok, state}
   end
 
   @impl true
   def handle_call(:snapshot, _from, state), do: {:reply, state, state}
 
   def handle_call({:ui_envelope_sync, envelope}, _from, state) do
+    put_logger_metadata(state)
     {:ok, outbound, next_state} = process_ui_envelope(envelope, state)
+    put_logger_metadata(next_state)
     {:reply, {:ok, outbound}, next_state}
   end
 
   @impl true
   def handle_cast({:ui_envelope, envelope}, state) do
+    put_logger_metadata(state)
     {:ok, outbound, next_state} = process_ui_envelope(envelope, state)
+    put_logger_metadata(next_state)
     {:noreply, dispatch_outbound(next_state, outbound)}
   end
 
   @impl true
   def handle_info(:tick, state) do
+    put_logger_metadata(state)
     state = %{state | tick_ref: nil}
     screen_state = dispatch_screen_info(state.screen_module, :tick, state.screen_state)
     next_state = apply_screen_update(state, screen_state, nil)
+    put_logger_metadata(next_state)
     {:noreply, maybe_schedule_tick(next_state)}
   end
 
   def handle_info({:flush_patch_batch, token}, %{patch_flush_ref: {token, _timer_ref}} = state) do
+    put_logger_metadata(state)
     state = %{state | patch_flush_ref: nil}
-    {:noreply, flush_pending_patch_batch(state)}
+    next_state = flush_pending_patch_batch(state)
+    put_logger_metadata(next_state)
+    {:noreply, next_state}
   end
 
-  def handle_info({:flush_patch_batch, _token}, state), do: {:noreply, state}
+  def handle_info({:flush_patch_batch, _token}, state) do
+    put_logger_metadata(state)
+    {:noreply, state}
+  end
 
   @impl true
-  def handle_info(_message, state), do: {:noreply, state}
+  def handle_info(_message, state) do
+    put_logger_metadata(state)
+    {:noreply, state}
+  end
 
   @impl true
   def terminate(_reason, state) do
+    put_logger_metadata(state)
     cancel_patch_flush_timer(state.patch_flush_ref)
 
     state
@@ -184,13 +208,17 @@ defmodule Projection.Session do
         state = clear_pending_patch_batch(state)
         sid = ensure_stable_sid(state.sid, incoming_sid)
         rev = state.rev + 1
-        render = Protocol.render_envelope(sid, rev, state.vm)
         next_state = maybe_schedule_tick(%{state | sid: sid, rev: rev})
+        put_logger_metadata(next_state)
+        Logger.info("ui ready received; sending render snapshot")
+        render = Protocol.render_envelope(sid, rev, state.vm)
         {:ok, [render], next_state}
 
       %{"t" => "intent", "name" => name} = intent when is_binary(name) ->
         payload = normalize_payload(Map.get(intent, "payload"))
         ack = normalize_ack(Map.get(intent, "id"))
+        emit_intent_received(state, name, ack)
+        Logger.debug("ui intent received name=#{name} ack=#{inspect(ack)}")
 
         case maybe_handle_route_intent(name, payload, ack, state) do
           {:handled, next_state} ->
@@ -226,6 +254,7 @@ defmodule Projection.Session do
   defp maybe_handle_route_intent(_name, _payload, _ack, _state), do: :unhandled
 
   defp apply_route_navigate(state, payload, ack) do
+    from_screen = session_screen_label(state)
     to_name = Map.get(payload, "to") || Map.get(payload, "arg")
     params = normalize_screen_params(Map.get(payload, "params", %{}))
 
@@ -241,6 +270,9 @@ defmodule Projection.Session do
         screen_module: route_def.screen_module,
         screen_params: params
       })
+      |> tap(fn _ ->
+        Logger.info("screen transition navigate from=#{from_screen} to=#{to_name}")
+      end)
       |> sync_subscriptions()
       |> apply_screen_update(screen_state, ack)
     else
@@ -281,6 +313,8 @@ defmodule Projection.Session do
   end
 
   defp apply_route_back(state, ack) do
+    from_screen = session_screen_label(state)
+
     with {:ok, nav} <- state.router.back(state.nav),
          {:ok, route_def} <- state.router.current_route(nav) do
       current = state.router.current(nav)
@@ -292,6 +326,9 @@ defmodule Projection.Session do
         screen_module: route_def.screen_module,
         screen_params: current.params
       })
+      |> tap(fn _ ->
+        Logger.info("screen transition back from=#{from_screen} to=#{current.name}")
+      end)
       |> sync_subscriptions()
       |> apply_screen_update(screen_state, ack)
     else
@@ -399,37 +436,48 @@ defmodule Projection.Session do
   end
 
   defp render_vm_with_status(%{router: nil} = state) do
-    case safe_render_screen(state.screen_module, state.screen_state.assigns) do
-      {:ok, vm} ->
-        {:ok, vm}
+    render_started = System.monotonic_time()
 
-      {:error, error_vm} ->
-        {:error, render_error_vm(state, error_vm)}
-    end
+    result =
+      case safe_render_screen(state.screen_module, state.screen_state.assigns, state) do
+        {:ok, vm} ->
+          {:ok, vm}
+
+        {:error, error_vm} ->
+          {:error, render_error_vm(state, error_vm)}
+      end
+
+    emit_render_complete(state, result, render_started)
+    result
   end
 
   defp render_vm_with_status(state) do
     current = state.router.current(state.nav)
+    render_started = System.monotonic_time()
 
-    case safe_render_screen(state.screen_module, state.screen_state.assigns) do
-      {:ok, screen_vm} ->
-        {:ok,
-         %{
-           app: %{title: state.app_title},
-           nav: state.router.to_vm(state.nav),
-           screen: %{
-             name: current.name,
-             action: current.action,
-             vm: screen_vm
-           }
-         }}
+    result =
+      case safe_render_screen(state.screen_module, state.screen_state.assigns, state) do
+        {:ok, screen_vm} ->
+          {:ok,
+           %{
+             app: %{title: state.app_title},
+             nav: state.router.to_vm(state.nav),
+             screen: %{
+               name: current.name,
+               action: current.action,
+               vm: screen_vm
+             }
+           }}
 
-      {:error, error_vm} ->
-        {:error, render_error_vm(state, error_vm)}
-    end
+        {:error, error_vm} ->
+          {:error, render_error_vm(state, error_vm)}
+      end
+
+    emit_render_complete(state, result, render_started)
+    result
   end
 
-  defp safe_render_screen(screen_module, assigns) when is_map(assigns) do
+  defp safe_render_screen(screen_module, assigns, context_state) when is_map(assigns) do
     try do
       vm = render_screen(screen_module, assigns)
 
@@ -441,6 +489,15 @@ defmodule Projection.Session do
     rescue
       exception ->
         stacktrace = __STACKTRACE__
+
+        metadata =
+          telemetry_metadata(context_state, %{
+            kind: :render_exception,
+            error: Exception.message(exception),
+            exception: inspect(exception)
+          })
+
+        Telemetry.execute(@event_error, %{count: 1}, metadata)
 
         Logger.error(
           "screen render failed for #{inspect(screen_module)}\n" <>
@@ -775,14 +832,26 @@ defmodule Projection.Session do
   end
 
   defp flush_pending_patch_batch(%{sid: sid} = state) when is_binary(sid) do
+    ops_count = length(state.pending_patch_ops)
     rev = state.rev + 1
     patch_opts = if is_nil(state.pending_ack), do: [], else: [ack: state.pending_ack]
     patch = Protocol.patch_envelope(sid, rev, state.pending_patch_ops, patch_opts)
 
-    state
-    |> clear_pending_patch_batch()
-    |> Map.put(:rev, rev)
-    |> dispatch_outbound([patch])
+    next_state =
+      state
+      |> clear_pending_patch_batch()
+      |> Map.put(:rev, rev)
+
+    put_logger_metadata(next_state)
+    Logger.debug("patch sent rev=#{rev} ops=#{ops_count} ack=#{inspect(state.pending_ack)}")
+
+    Telemetry.execute(
+      @event_patch_sent,
+      %{count: 1, op_count: ops_count},
+      telemetry_metadata(next_state, %{ack: state.pending_ack})
+    )
+
+    dispatch_outbound(next_state, [patch])
   end
 
   defp schedule_patch_batch_flush(
@@ -859,5 +928,57 @@ defmodule Projection.Session do
   defp normalize_subscription_hook(other) do
     raise ArgumentError,
           "expected :subscription_hook to be a 2-arity function, got: #{inspect(other)}"
+  end
+
+  defp emit_intent_received(state, name, ack) do
+    Telemetry.execute(
+      @event_intent_received,
+      %{count: 1},
+      telemetry_metadata(state, %{intent: name, ack: ack})
+    )
+  end
+
+  defp emit_render_complete(state, result, render_started) do
+    duration_native = System.monotonic_time() - render_started
+    status = if match?({:ok, _}, result), do: :ok, else: :error
+
+    Telemetry.execute(
+      @event_render_complete,
+      %{count: 1, duration_native: duration_native},
+      telemetry_metadata(state, %{status: status})
+    )
+  end
+
+  defp put_logger_metadata(state) when is_map(state) do
+    Logger.metadata(
+      sid: Map.get(state, :sid),
+      rev: Map.get(state, :rev),
+      screen: session_screen_label(state)
+    )
+  end
+
+  defp session_screen_label(%{router: nil, screen_module: screen_module}) do
+    inspect(screen_module)
+  end
+
+  defp session_screen_label(%{router: router, nav: nav, screen_module: fallback})
+       when is_atom(router) do
+    case router.current(nav) do
+      %{name: name} when is_binary(name) -> name
+      _ -> inspect(fallback)
+    end
+  rescue
+    _ -> inspect(fallback)
+  end
+
+  defp session_screen_label(%{screen_module: screen_module}), do: inspect(screen_module)
+
+  defp telemetry_metadata(state, extra \\ %{}) do
+    %{
+      sid: Map.get(state, :sid),
+      rev: Map.get(state, :rev),
+      screen: session_screen_label(state)
+    }
+    |> Map.merge(extra)
   end
 end

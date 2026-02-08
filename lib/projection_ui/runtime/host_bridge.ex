@@ -16,8 +16,10 @@ defmodule ProjectionUI.HostBridge do
 
   alias Projection.Session
   alias Projection.Protocol
+  alias Projection.Telemetry
 
   @backoff_steps_ms [100, 200, 500, 1_000, 2_000, 5_000]
+  @event_error [:host_bridge, :error]
 
   @typedoc "Internal state for the port owner process."
   @type state :: %{
@@ -70,46 +72,66 @@ defmodule ProjectionUI.HostBridge do
       reconnect_idx: 0
     }
 
-    {:ok, maybe_connect(state)}
+    state = maybe_connect(state)
+    put_logger_metadata(state)
+    {:ok, state}
   end
 
   @impl true
   def handle_cast({:send_envelope, envelope}, state) do
-    {:noreply, dispatch_to_port(envelope, state)}
+    put_logger_metadata(state)
+    next_state = dispatch_to_port(envelope, state)
+    put_logger_metadata(next_state)
+    {:noreply, next_state}
   end
 
   @impl true
   def handle_info(:reconnect, state) do
-    {:noreply, maybe_connect(state)}
+    put_logger_metadata(state)
+    next_state = maybe_connect(state)
+    put_logger_metadata(next_state)
+    {:noreply, next_state}
   end
 
   def handle_info({port, {:data, payload}}, %{port: port} = state) when is_binary(payload) do
+    put_logger_metadata(state)
+
     next_state =
       case Protocol.decode_inbound(payload) do
         {:ok, envelope} ->
           next_state = maybe_track_sid_from_envelope(envelope, state)
+          put_logger_metadata(next_state)
           Session.handle_ui_envelope(state.session, envelope)
           next_state
 
         {:error, reason} ->
           Logger.warning("ui_host inbound decode failed: #{inspect(reason)}")
+          emit_error(reason, state, %{source: :decode_inbound})
           handle_decode_error(reason, state)
       end
 
+    put_logger_metadata(next_state)
     {:noreply, next_state}
   end
 
   def handle_info({port, {:exit_status, status}}, %{port: port} = state) do
+    put_logger_metadata(state)
     Logger.warning("ui_host exited with status #{status}; scheduling reconnect")
+    emit_error(:port_exit_status, state, %{status: status})
     {:noreply, schedule_reconnect(%{state | port: nil})}
   end
 
   def handle_info({:EXIT, port, reason}, %{port: port} = state) do
+    put_logger_metadata(state)
     Logger.warning("ui_host port exit #{inspect(reason)}; scheduling reconnect")
+    emit_error(:port_exit, state, %{reason: inspect(reason)})
     {:noreply, schedule_reconnect(%{state | port: nil})}
   end
 
-  def handle_info(_msg, state), do: {:noreply, state}
+  def handle_info(_msg, state) do
+    put_logger_metadata(state)
+    {:noreply, state}
+  end
 
   @impl true
   def terminate(_reason, %{port: port}) when is_port(port) do
@@ -136,6 +158,7 @@ defmodule ProjectionUI.HostBridge do
 
       {:error, reason} ->
         Logger.warning("ui_host outbound encode failed: #{inspect(reason)}")
+        emit_error(reason, state, %{source: :encode_outbound})
         state
     end
   end
@@ -166,6 +189,7 @@ defmodule ProjectionUI.HostBridge do
     rescue
       error ->
         Logger.warning("failed to start ui_host: #{Exception.message(error)}")
+        emit_error(:connect_failed, state, %{error: Exception.message(error)})
         schedule_reconnect(state)
     end
   end
@@ -218,4 +242,24 @@ defmodule ProjectionUI.HostBridge do
 
   defp normalize_sid(sid) when is_binary(sid) and sid != "", do: sid
   defp normalize_sid(_sid), do: "S1"
+
+  defp put_logger_metadata(state) when is_map(state) do
+    Logger.metadata(sid: state.sid, rev: nil, screen: "host_bridge")
+  end
+
+  defp emit_error(reason, state, extra) do
+    Telemetry.execute(
+      @event_error,
+      %{count: 1},
+      Map.merge(
+        %{
+          sid: state.sid,
+          rev: nil,
+          screen: "host_bridge",
+          code: to_string(reason)
+        },
+        Map.new(extra)
+      )
+    )
+  end
 end

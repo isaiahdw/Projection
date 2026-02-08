@@ -66,6 +66,25 @@ Communication uses JSON envelopes over `{:packet, 4}` framed stdio:
 
 The host validates that each revision is exactly `last_rev + 1`. If a revision is stale, skipped, or arrives before the initial render, the host resets its state and sends `ready` to resync.
 
+### Observability
+
+Session and host processes emit structured log metadata on every event loop turn:
+
+- `sid`
+- `rev`
+- `screen`
+
+Session telemetry events are emitted under `[:projection, ...]`:
+
+- `[:projection, :session, :intent, :received]`
+- `[:projection, :session, :render, :complete]`
+- `[:projection, :session, :patch, :sent]`
+- `[:projection, :session, :error]`
+
+Host-bridge errors emit:
+
+- `[:projection, :host_bridge, :error]`
+
 ### Bindings and codegen
 
 Each screen declares a typed schema in Elixir:
