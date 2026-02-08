@@ -1,0 +1,27 @@
+import { Screen } from "screen.slint";
+
+export component ErrorScreen inherits Screen {
+    in property <string> title: "Rendering Error";
+    in property <string> message: "";
+    in property <string> screen_module: "";
+
+    spacing: 8px;
+
+    Text {
+        text: root.title;
+        font-size: 16px;
+        color: #cc4444;
+    }
+
+    Text {
+        text: root.message;
+        wrap: word-wrap;
+        color: #c0c0d0;
+    }
+
+    Text {
+        text: "Module: " + root.screen_module;
+        font-size: 11px;
+        color: #666688;
+    }
+}
