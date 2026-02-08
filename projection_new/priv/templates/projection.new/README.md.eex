@@ -1,0 +1,22 @@
+# <%= module %>
+
+Generated with `mix projection.new`.
+
+This starter uses Projection (Elixir authority) + Slint (native renderer).
+
+## Quick start
+
+```bash
+mix deps.get
+mix compile
+mix run -e "<%= module %>.Demo.run()"
+```
+
+The app compiles `slint/ui_host`, copies it to `priv/ui_host/`, then starts a routed session on the `hello` screen.
+
+## Structure
+
+- `lib/<%= app %>/router.ex` route definitions via `Projection.Router.DSL`
+- `lib/<%= app %>/screens/hello.ex` starter screen
+- `lib/projection_ui/ui/*.slint` shared UI shell + starter screen template
+- `slint/ui_host/` Rust host that renders Slint and bridges intents/patches

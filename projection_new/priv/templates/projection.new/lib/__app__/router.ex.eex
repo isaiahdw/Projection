@@ -1,0 +1,7 @@
+defmodule <%= module %>.Router do
+  use Projection.Router.DSL
+
+  screen_session :main do
+    screen "/hello", <%= module %>.Screens.Hello, :show, as: :hello
+  end
+end
