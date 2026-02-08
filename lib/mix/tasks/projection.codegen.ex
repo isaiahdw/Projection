@@ -5,7 +5,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
   @moduledoc """
   Generates Rust binding glue under `slint/ui_host/src/generated/` from
-  `__projection_schema__/0` metadata defined in `ProjectionUI.Screens.*` modules.
+  `__projection_schema__/0` metadata exported by screen modules.
   """
 
   @supported_schema_types [:string, :bool, :integer, :float, :map, :list, :id_table, :component]
@@ -13,16 +13,18 @@ defmodule Mix.Tasks.Projection.Codegen do
 
   @impl Mix.Task
   def run(_args) do
-    ensure_app_loaded!()
+    ensure_apps_loaded!(configured_otp_apps())
 
     router_module = discover_router_module()
     routes = discover_routes(router_module)
     nav_routes = discover_nav_routes(router_module, routes)
 
     specs =
-      discover_screen_modules()
+      discover_screen_modules(routes)
       |> Enum.map(&build_screen_spec/1)
       |> Enum.sort_by(& &1.module_name)
+
+    ensure_codegen_targets!(specs, routes)
 
     generated_dir = Path.join(File.cwd!(), "slint/ui_host/src/generated")
     File.mkdir_p!(generated_dir)
@@ -71,7 +73,7 @@ defmodule Mix.Tasks.Projection.Codegen do
     app_result =
       write_file_if_changed(
         Path.join(generated_dir, "app.slint"),
-        render_generated_app_slint(specs)
+        render_generated_app_slint(specs, routes)
       )
 
     error_state_result =
@@ -85,6 +87,8 @@ defmodule Mix.Tasks.Projection.Codegen do
         Path.join(File.cwd!(), "slint/ui_host/build.rs"),
         render_build_rs(specs)
       )
+
+    removed_count = prune_stale_generated_files(generated_dir, specs)
 
     written_count =
       Enum.count(
@@ -105,13 +109,15 @@ defmodule Mix.Tasks.Projection.Codegen do
       )
 
     Mix.shell().info(
-      "projection.codegen generated #{length(specs)} screen module(s), #{length(routes)} route constant(s), wrote #{written_count} file(s)"
+      "projection.codegen generated #{length(specs)} screen module(s), #{length(routes)} route constant(s), wrote #{written_count} file(s), removed #{removed_count} stale file(s)"
     )
   end
 
   defp discover_router_module do
-    Application.get_env(:projection, :router_module, Projection.Router)
+    Application.get_env(:projection, :router_module)
   end
+
+  defp discover_routes(nil), do: []
 
   defp discover_routes(router_module) do
     if Code.ensure_loaded?(router_module) and function_exported?(router_module, :route_defs, 0) do
@@ -138,6 +144,7 @@ defmodule Mix.Tasks.Projection.Codegen do
     end
   end
 
+  defp discover_nav_routes(nil, _routes), do: []
   defp discover_nav_routes(_router_module, []), do: []
 
   defp discover_nav_routes(router_module, routes) do
@@ -194,20 +201,102 @@ defmodule Mix.Tasks.Projection.Codegen do
     raise ArgumentError, "invalid route metadata for codegen: #{inspect(route)}"
   end
 
-  defp discover_screen_modules do
-    :projection
-    |> Application.spec(:modules)
-    |> List.wrap()
-    |> Enum.filter(&screen_module?/1)
+  defp discover_screen_modules(routes) when is_list(routes) do
+    route_modules =
+      routes
+      |> Enum.map(& &1.screen_module)
+      |> Enum.filter(&is_atom/1)
+
+    configured_modules = configured_screen_modules()
+
+    marker_modules =
+      configured_otp_apps()
+      |> Enum.flat_map(fn app ->
+        app
+        |> Application.spec(:modules)
+        |> List.wrap()
+      end)
+      |> Enum.filter(&Code.ensure_loaded?/1)
+      |> Enum.filter(&function_exported?(&1, :__projection_screen__, 0))
+      |> Enum.filter(&function_exported?(&1, :__projection_schema__, 0))
+
+    (route_modules ++ configured_modules ++ marker_modules)
+    |> Enum.uniq()
     |> Enum.filter(&Code.ensure_loaded?/1)
     |> Enum.filter(&function_exported?(&1, :__projection_schema__, 0))
     |> Enum.sort_by(&Atom.to_string/1)
   end
 
-  defp screen_module?(module) do
-    module
-    |> Atom.to_string()
-    |> String.starts_with?("Elixir.ProjectionUI.Screens.")
+  defp ensure_codegen_targets!([], routes) when is_list(routes) do
+    if allow_empty_codegen?() do
+      :ok
+    else
+      route_hint =
+        if routes == [] do
+          "Set `config :projection, router_module: MyApp.Router` and/or " <>
+            "`config :projection, screen_modules: [MyApp.Screens.Home]`."
+        else
+          "Verify all route screen modules export `__projection_screen__/0` and `__projection_schema__/0`."
+        end
+
+      Mix.raise(
+        "projection.codegen discovered no screen modules. " <>
+          route_hint <>
+          " Set `PROJECTION_ALLOW_EMPTY=1` to bypass."
+      )
+    end
+  end
+
+  defp ensure_codegen_targets!(_specs, _routes), do: :ok
+
+  defp allow_empty_codegen? do
+    System.get_env("PROJECTION_ALLOW_EMPTY") in ["1", "true", "TRUE", "yes", "YES"]
+  end
+
+  defp configured_screen_modules do
+    case Application.get_env(:projection, :screen_modules, []) do
+      modules when is_list(modules) ->
+        modules
+        |> Enum.filter(&(is_atom(&1) and not is_nil(&1)))
+        |> Enum.filter(&Code.ensure_loaded?/1)
+
+      _other ->
+        []
+    end
+  end
+
+  defp configured_otp_apps do
+    case Application.get_env(:projection, :otp_apps) do
+      apps when is_list(apps) and apps != [] ->
+        apps
+        |> Enum.filter(&(is_atom(&1) and not is_nil(&1)))
+        |> case do
+          [] -> [configured_otp_app()]
+          filtered -> filtered
+        end
+
+      _ ->
+        [configured_otp_app()]
+    end
+  end
+
+  defp configured_otp_app do
+    case Application.get_env(:projection, :otp_app) do
+      app when is_atom(app) and not is_nil(app) ->
+        app
+
+      _ ->
+        case Mix.Project.get() do
+          nil ->
+            :projection
+
+          _project ->
+            case Mix.Project.config()[:app] do
+              app when is_atom(app) -> app
+              _ -> :projection
+            end
+        end
+    end
   end
 
   defp build_screen_spec(module) do
@@ -387,12 +476,19 @@ defmodule Mix.Tasks.Projection.Codegen do
     |> Enum.sort_by(&Atom.to_string(&1.name))
   end
 
-  defp ensure_app_loaded! do
-    case Application.load(:projection) do
-      :ok -> :ok
-      {:error, {:already_loaded, :projection}} -> :ok
-      {:error, reason} -> Mix.raise("failed to load :projection application: #{inspect(reason)}")
-    end
+  defp ensure_apps_loaded!(apps) when is_list(apps) do
+    Enum.each(apps, fn app ->
+      case Application.load(app) do
+        :ok ->
+          :ok
+
+        {:error, {:already_loaded, ^app}} ->
+          :ok
+
+        {:error, reason} ->
+          Mix.raise("failed to load application #{inspect(app)}: #{inspect(reason)}")
+      end
+    end)
   end
 
   defp write_file_if_changed(path, content) when is_binary(path) and is_binary(content) do
@@ -414,6 +510,40 @@ defmodule Mix.Tasks.Projection.Codegen do
 
   defp max_concurrency do
     System.schedulers_online()
+  end
+
+  defp prune_stale_generated_files(generated_dir, specs) do
+    keep =
+      MapSet.new(
+        [
+          "mod.rs",
+          "routes.slint",
+          "screen_host.slint",
+          "app.slint",
+          "error_state.slint"
+        ] ++
+          Enum.map(specs, &"#{&1.file_name}.rs") ++
+          Enum.map(specs, & &1.state_file)
+      )
+
+    generated_dir
+    |> Path.join("*")
+    |> Path.wildcard()
+    |> Enum.reduce(0, fn path, acc ->
+      file_name = Path.basename(path)
+
+      cond do
+        not File.regular?(path) ->
+          acc
+
+        MapSet.member?(keep, file_name) ->
+          acc
+
+        true ->
+          File.rm!(path)
+          acc + 1
+      end
+    end)
   end
 
   defp render_generated_mod([], _routes) do
@@ -1481,6 +1611,8 @@ defmodule Mix.Tasks.Projection.Codegen do
   end
 
   defp render_screen_host_slint(specs, routes, nav_routes) do
+    active_screen_default = default_active_screen(routes)
+
     spec_by_module = Map.new(specs, &{&1.module, &1})
 
     routes_with_specs =
@@ -1535,7 +1667,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
     export component ScreenHost inherits VerticalLayout {
         in property <int> vm_rev: 0;
-        in property <string> active_screen: "clock";
+        in property <string> active_screen: "#{escape_slint_string(active_screen_default)}";
         callback ui_intent(intent_name: string, intent_arg: string);
         callback navigate(route_name: string, params_json: string);
 
@@ -1675,7 +1807,9 @@ defmodule Mix.Tasks.Projection.Codegen do
   defp slint_literal(:float, value), do: format_float(value)
   defp slint_literal(:list, value), do: slint_string_list_literal(value)
 
-  defp render_generated_app_slint(specs) do
+  defp render_generated_app_slint(specs, routes) do
+    active_screen_default = default_active_screen(routes)
+
     state_export_lines =
       specs
       |> Enum.map(fn spec ->
@@ -1695,7 +1829,7 @@ defmodule Mix.Tasks.Projection.Codegen do
     export component AppWindow inherits Window {
         in property <int> vm_rev: 0;
         in property <string> app_title: "Projection Demo";
-        in property <string> active_screen: "clock";
+        in property <string> active_screen: "#{escape_slint_string(active_screen_default)}";
         in property <bool> nav_can_back: false;
 
         callback ui_intent(intent_name: string, intent_arg: string);
@@ -1722,6 +1856,9 @@ defmodule Mix.Tasks.Projection.Codegen do
     }
     """
   end
+
+  defp default_active_screen([%{name: name} | _]) when is_binary(name), do: name
+  defp default_active_screen(_routes), do: "error"
 
   defp error_state_fields do
     [

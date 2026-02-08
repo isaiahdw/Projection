@@ -26,8 +26,7 @@ defmodule ProjectionUI do
 
       alias ProjectionUI.State
       import ProjectionUI.State, only: [assign: 3, update: 3]
-      use ProjectionUI.Schema
-      @projection_schema_owner :screen
+      use ProjectionUI.Schema, owner: :screen
 
       @doc false
       @spec mount(map(), map(), State.t()) :: {:ok, State.t()}
@@ -78,6 +77,10 @@ defmodule ProjectionUI do
         end
       end
 
+      @doc false
+      @spec __projection_screen__() :: true
+      def __projection_screen__, do: true
+
       defoverridable mount: 3,
                      handle_event: 3,
                      handle_params: 2,
@@ -90,8 +93,7 @@ defmodule ProjectionUI do
   @doc false
   def component do
     quote do
-      use ProjectionUI.Schema
-      @projection_schema_owner :component
+      use ProjectionUI.Schema, owner: :component
 
       @doc false
       @spec __projection_component__() :: true

@@ -7,8 +7,11 @@ defmodule Projection.MixProject do
       version: "0.1.0",
       elixir: "~> 1.19",
       start_permanent: Mix.env() == :prod,
-      compilers: Mix.compilers() ++ [:projection_codegen, :projection_ui_host],
-      deps: deps()
+      deps: deps(),
+      description: "Elixir-authoritative UI for native and embedded apps, rendered by Slint.",
+      source_url: "https://github.com/isaiahp/projection",
+      docs: [main: "readme", extras: ["README.md"]],
+      package: package()
     ]
   end
 
@@ -21,7 +24,29 @@ defmodule Projection.MixProject do
   defp deps do
     [
       {:jason, "~> 1.4"},
-      {:telemetry, "~> 1.2"}
+      {:telemetry, "~> 1.2"},
+      {:ex_doc, "~> 0.37", only: :dev, runtime: false}
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      links: %{"GitHub" => "https://github.com/isaiahp/projection"},
+      files: ~w(
+        lib
+        slint/ui_host/Cargo.toml
+        slint/ui_host/build.rs
+        slint/ui_host/.gitignore
+        slint/ui_host/src/main.rs
+        slint/ui_host/src/protocol.rs
+        slint/ui_host/src/patch_apply.rs
+        mix.exs
+        mix.lock
+        README.md
+        LICENSE
+        .formatter.exs
+      )
     ]
   end
 end

@@ -31,6 +31,7 @@ defmodule Projection.SessionTelemetryTest do
         {Session,
          [
            sid: "S1",
+           screen_module: Projection.TestScreens.Clock,
            host_bridge: self(),
            batch_window_ms: 0
          ]}

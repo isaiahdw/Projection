@@ -21,7 +21,7 @@ defmodule Projection.SessionRouterTest do
 
     screen_session :main do
       screen("/broken", FailingRenderScreen, :show, as: :broken)
-      screen("/clock", ProjectionUI.Screens.Clock, :show, as: :clock)
+      screen("/clock", Projection.TestScreens.Clock, :show, as: :clock)
     end
   end
 
@@ -31,7 +31,7 @@ defmodule Projection.SessionRouterTest do
         {Session,
          [
            sid: "S1",
-           router: Projection.Router,
+           router: Projection.TestRouter,
            route: "clock",
            screen_params: %{"clock_text" => "10:42:17"},
            host_bridge: self()
@@ -60,7 +60,7 @@ defmodule Projection.SessionRouterTest do
     assert patch_to_devices["ack"] == 10
 
     snapshot = Session.snapshot(session)
-    assert snapshot.screen_module == ProjectionUI.Screens.Devices
+    assert snapshot.screen_module == Projection.TestScreens.Devices
     assert snapshot.vm.screen.name == "devices"
     assert snapshot.vm.nav.current.name == "devices"
     assert length(snapshot.vm.screen.vm.devices.order) == 2
@@ -80,7 +80,7 @@ defmodule Projection.SessionRouterTest do
     assert patch_to_clock["ack"] == 11
 
     snapshot = Session.snapshot(session)
-    assert snapshot.screen_module == ProjectionUI.Screens.Clock
+    assert snapshot.screen_module == Projection.TestScreens.Clock
     assert snapshot.vm.screen.name == "clock"
     assert snapshot.vm.nav.current.name == "clock"
     assert length(snapshot.vm.nav.stack) == 1
@@ -92,7 +92,7 @@ defmodule Projection.SessionRouterTest do
         {Session,
          [
            sid: "S1",
-           router: Projection.Router,
+           router: Projection.TestRouter,
            route: "clock",
            screen_params: %{"clock_text" => "10:42:17"},
            host_bridge: self()
@@ -130,7 +130,7 @@ defmodule Projection.SessionRouterTest do
         {Session,
          [
            sid: "S1",
-           router: Projection.Router,
+           router: Projection.TestRouter,
            route: "clock",
            host_bridge: self()
          ]}
@@ -160,7 +160,7 @@ defmodule Projection.SessionRouterTest do
         {Session,
          [
            sid: "S1",
-           router: Projection.Router,
+           router: Projection.TestRouter,
            route: "clock",
            host_bridge: self()
          ]}
@@ -195,7 +195,7 @@ defmodule Projection.SessionRouterTest do
         {Session,
          [
            sid: "S1",
-           router: Projection.Router,
+           router: Projection.TestRouter,
            route: "clock",
            screen_params: %{"clock_timezone" => "UTC"},
            subscription_hook: subscription_hook,
@@ -242,7 +242,7 @@ defmodule Projection.SessionRouterTest do
         {Session,
          [
            sid: "S1",
-           router: Projection.Router,
+           router: Projection.TestRouter,
            route: "clock",
            screen_params: %{"clock_timezone" => "UTC"},
            subscription_hook: subscription_hook,

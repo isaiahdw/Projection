@@ -8,7 +8,7 @@ defmodule Projection.Session do
   - keep monotonic `rev`
   - keep stable `sid` for a running session
   - emit periodic `patch` updates from screen state changes
-  - optionally run route-aware screen switching via `Projection.Router`
+  - optionally run route-aware screen switching via a router built with `Projection.Router.DSL`
   """
 
   use GenServer
@@ -17,7 +17,6 @@ defmodule Projection.Session do
 
   alias Projection.Patch
   alias Projection.Protocol
-  alias Projection.Router
   alias Projection.Telemetry
   alias ProjectionUI.HostBridge
   alias ProjectionUI.State
@@ -41,7 +40,7 @@ defmodule Projection.Session do
           tick_ref: reference() | nil,
           host_bridge: GenServer.server() | nil,
           router: module() | nil,
-          nav: Router.nav() | nil,
+          nav: map() | nil,
           app_title: String.t(),
           screen_params: map(),
           screen_session: map(),
@@ -58,9 +57,9 @@ defmodule Projection.Session do
 
     * `:name` — registered process name
     * `:sid` — initial session ID (assigned on first `ready` if `nil`)
-    * `:router` — router module (e.g. `Projection.Router`)
+    * `:router` — router module built with `Projection.Router.DSL`
     * `:route` — initial route name (defaults to the router's first route)
-    * `:screen_module` — screen module when running without a router
+    * `:screen_module` — required when running without a router
     * `:screen_params` — params passed to `c:ProjectionUI.Screen.mount/3`
     * `:screen_session` — session map passed to `c:ProjectionUI.Screen.mount/3`
     * `:batch_window_ms` — patch batch flush window in milliseconds (default `16`)
@@ -338,13 +337,13 @@ defmodule Projection.Session do
 
   defp init_screen_context(opts, nil, screen_session) do
     screen_params = normalize_screen_params(Keyword.get(opts, :screen_params, %{}))
-    screen_module = Keyword.get(opts, :screen_module, ProjectionUI.Screens.Clock)
+    screen_module = Keyword.fetch!(opts, :screen_module)
     screen_state = mount_screen!(screen_module, screen_params, screen_session)
     {screen_module, screen_params, screen_state, nil}
   end
 
   defp init_screen_context(opts, router, screen_session) do
-    route_name = normalize_route_name(Keyword.get(opts, :route, router.default_route_name()))
+    route_name = normalize_route_name(Keyword.get(opts, :route), router)
     screen_params = normalize_screen_params(Keyword.get(opts, :screen_params, %{}))
 
     with {:ok, nav} <- router.initial_nav(route_name, screen_params),
@@ -773,9 +772,17 @@ defmodule Projection.Session do
   defp normalize_router(router) when is_atom(router), do: router
   defp normalize_router(_router), do: nil
 
-  defp normalize_route_name(name) when is_binary(name), do: name
-  defp normalize_route_name(name) when is_atom(name), do: Atom.to_string(name)
-  defp normalize_route_name(_name), do: Router.default_route_name()
+  defp normalize_route_name(name, _router) when is_binary(name), do: name
+  defp normalize_route_name(name, _router) when is_atom(name), do: Atom.to_string(name)
+
+  defp normalize_route_name(_name, router) when is_atom(router) do
+    if function_exported?(router, :default_route_name, 0) do
+      router.default_route_name()
+    else
+      raise ArgumentError,
+            "router #{inspect(router)} must export default_route_name/0 when :route is not provided"
+    end
+  end
 
   defp normalize_app_title(title) when is_binary(title) and title != "", do: title
   defp normalize_app_title(_title), do: "Projection Demo"
@@ -973,7 +980,7 @@ defmodule Projection.Session do
 
   defp session_screen_label(%{screen_module: screen_module}), do: inspect(screen_module)
 
-  defp telemetry_metadata(state, extra \\ %{}) do
+  defp telemetry_metadata(state, extra) do
     %{
       sid: Map.get(state, :sid),
       rev: Map.get(state, :rev),

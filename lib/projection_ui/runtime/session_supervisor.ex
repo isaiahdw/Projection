@@ -19,6 +19,8 @@ defmodule ProjectionUI.SessionSupervisor do
     * `:host_bridge_name` — registered name for the bridge (default: `ProjectionUI.HostBridge`)
     * `:command` — path to the UI host executable
 
+  You must provide either `:router` or `:screen_module`.
+
   """
   @spec start_link(keyword()) :: Supervisor.on_start()
   def start_link(opts) do
@@ -36,6 +38,7 @@ defmodule ProjectionUI.SessionSupervisor do
     screen_params = Keyword.get(opts, :screen_params)
     screen_session = Keyword.get(opts, :screen_session)
     subscription_hook = Keyword.get(opts, :subscription_hook)
+    validate_screen_runtime!(router, screen_module)
 
     session_opts =
       [
@@ -74,4 +77,11 @@ defmodule ProjectionUI.SessionSupervisor do
 
   defp maybe_put(opts, _key, nil), do: opts
   defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
+
+  defp validate_screen_runtime!(nil, nil) do
+    raise ArgumentError,
+          "start_link/1 requires either :router or :screen_module to build a session runtime"
+  end
+
+  defp validate_screen_runtime!(_router, _screen_module), do: :ok
 end

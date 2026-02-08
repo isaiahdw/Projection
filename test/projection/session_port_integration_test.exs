@@ -9,6 +9,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
+           screen_module: Projection.TestScreens.Clock,
            host_bridge: self()
          ]}
       )
@@ -22,7 +23,14 @@ defmodule Projection.SessionPortIntegrationTest do
   end
 
   test "ready triggers render and keeps stable sid with monotonic rev" do
-    {:ok, session} = start_supervised({Session, [screen_params: %{"clock_text" => "10:42:17"}]})
+    {:ok, session} =
+      start_supervised(
+        {Session,
+         [
+           screen_module: Projection.TestScreens.Clock,
+           screen_params: %{"clock_text" => "10:42:17"}
+         ]}
+      )
 
     assert {:ok, [render_1]} =
              Session.handle_ui_envelope_sync(session, %{"t" => "ready", "sid" => "S1"})
@@ -50,6 +58,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
+           screen_module: Projection.TestScreens.Clock,
            screen_params: %{"clock_text" => "10:42:17"},
            tick_ms: 5_000,
            host_bridge: self()
@@ -80,6 +89,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
+           screen_module: Projection.TestScreens.Clock,
            screen_params: %{"clock_text" => "10:42:17"},
            tick_ms: 5_000,
            host_bridge: self()
@@ -145,6 +155,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
+           screen_module: Projection.TestScreens.Clock,
            screen_params: %{"clock_text" => "10:42:17"},
            tick_ms: 5_000,
            host_bridge: self()
@@ -184,6 +195,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
+           screen_module: Projection.TestScreens.Clock,
            screen_params: %{"clock_text" => "10:42:17"},
            tick_ms: 5_000,
            host_bridge: self()
@@ -219,6 +231,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
+           screen_module: Projection.TestScreens.Clock,
            host_bridge: self()
          ]}
       )
@@ -253,6 +266,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
+           screen_module: Projection.TestScreens.Clock,
            host_bridge: self()
          ]}
       )
@@ -312,6 +326,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
+           screen_module: Projection.TestScreens.Clock,
            host_bridge: self()
          ]}
       )
@@ -351,6 +366,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
+           screen_module: Projection.TestScreens.Clock,
            host_bridge: self()
          ]}
       )
@@ -374,7 +390,7 @@ defmodule Projection.SessionPortIntegrationTest do
         {Session,
          [
            sid: "S1",
-           screen_module: ProjectionUI.Screens.Devices,
+           screen_module: Projection.TestScreens.Devices,
            host_bridge: self()
          ]}
       )

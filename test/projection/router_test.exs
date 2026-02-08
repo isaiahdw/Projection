@@ -1,11 +1,11 @@
 defmodule Projection.RouterTest do
   use ExUnit.Case, async: true
 
-  alias Projection.Router
+  alias Projection.TestRouter, as: Router
 
   test "resolve returns known routes and rejects unknown routes" do
     assert {:ok, route} = Router.resolve("clock")
-    assert route.screen_module == ProjectionUI.Screens.Clock
+    assert route.screen_module == Projection.TestScreens.Clock
     assert {:error, :unknown_route} = Router.resolve("missing")
   end
 

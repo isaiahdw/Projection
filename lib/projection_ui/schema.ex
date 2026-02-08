@@ -18,7 +18,7 @@ defmodule ProjectionUI.Schema do
 
   Component fields are declared with `component/2,3` (not `field/3`):
 
-      component :status_badge, ProjectionUI.Components.StatusBadge
+      component :status_badge, MyApp.Components.StatusBadge
 
   ## Collection guidance
 
@@ -38,7 +38,13 @@ defmodule ProjectionUI.Schema do
   @allowed_types [:string, :bool, :integer, :float, :map, :list, :id_table]
   @component_supported_types [:string, :bool, :integer, :float, :list, :id_table]
 
-  defmacro __using__(_opts) do
+  defmacro __using__(opts) do
+    owner = Keyword.get(opts, :owner)
+
+    if owner in [:screen, :component] do
+      Module.put_attribute(__CALLER__.module, :projection_schema_owner, owner)
+    end
+
     quote do
       import ProjectionUI.Schema,
         only: [schema: 1, field: 2, field: 3, component: 2, component: 3]
@@ -378,7 +384,12 @@ defmodule ProjectionUI.Schema do
   end
 
   defp validate_component_context!(caller) do
-    if Module.get_attribute(caller.module, :projection_schema_owner) == :component do
+    owner = Module.get_attribute(caller.module, :projection_schema_owner)
+    behaviours = caller.module |> Module.get_attribute(:behaviour) |> List.wrap()
+
+    screen_context? = owner == :screen or ProjectionUI.Screen in behaviours
+
+    unless screen_context? do
       raise CompileError,
         file: caller.file,
         line: caller.line,
