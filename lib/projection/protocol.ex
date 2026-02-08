@@ -7,8 +7,11 @@ defmodule Projection.Protocol do
   - This module is responsible for JSON encoding/decoding and payload caps.
   """
 
+  require Logger
+
   @ui_to_elixir_cap 65_536
   @elixir_to_ui_cap 1_048_576
+  @warn_threshold_percent 80
 
   @typedoc "A JSON-serializable map representing a protocol envelope."
   @type envelope :: map()
@@ -29,6 +32,8 @@ defmodule Projection.Protocol do
   """
   @spec decode_inbound(binary()) :: {:ok, envelope()} | {:error, atom()}
   def decode_inbound(payload) when is_binary(payload) do
+    maybe_warn_frame_size(:ui_to_elixir, byte_size(payload), @ui_to_elixir_cap)
+
     if byte_size(payload) > @ui_to_elixir_cap do
       {:error, :frame_too_large}
     else
@@ -49,6 +54,7 @@ defmodule Projection.Protocol do
   @spec encode_outbound(envelope()) :: {:ok, binary()} | {:error, atom()}
   def encode_outbound(envelope) when is_map(envelope) do
     with {:ok, payload} <- Jason.encode(envelope),
+         :ok <- maybe_warn_frame_size(:elixir_to_ui, byte_size(payload), @elixir_to_ui_cap),
          :ok <- validate_outbound_size(payload) do
       {:ok, payload}
     else
@@ -108,5 +114,15 @@ defmodule Projection.Protocol do
     else
       :ok
     end
+  end
+
+  defp maybe_warn_frame_size(direction, size, cap) when is_integer(size) and is_integer(cap) do
+    if size <= cap and size * 100 >= cap * @warn_threshold_percent do
+      Logger.warning(
+        "protocol frame size nearing cap direction=#{direction} size=#{size} cap=#{cap} threshold=#{@warn_threshold_percent}%"
+      )
+    end
+
+    :ok
   end
 end

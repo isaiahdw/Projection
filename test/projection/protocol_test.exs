@@ -1,6 +1,8 @@
 defmodule Projection.ProtocolTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias Projection.Protocol
 
   @contract_path Path.expand("../../priv/protocol_contract/contract.json", __DIR__)
@@ -40,6 +42,32 @@ defmodule Projection.ProtocolTest do
 
   test "rejects malformed inbound payload" do
     assert {:error, :decode_error} = Protocol.decode_inbound("{")
+  end
+
+  test "logs warning when inbound frame reaches warning threshold" do
+    near_cap_payload = String.duplicate("a", 53_000)
+
+    log =
+      capture_log(fn ->
+        assert {:error, :decode_error} = Protocol.decode_inbound(near_cap_payload)
+      end)
+
+    assert log =~ "protocol frame size nearing cap direction=ui_to_elixir"
+  end
+
+  test "logs warning when outbound frame reaches warning threshold" do
+    envelope =
+      Protocol.render_envelope("S1", 1, %{
+        payload: String.duplicate("a", 850_000)
+      })
+
+    log =
+      capture_log(fn ->
+        assert {:ok, encoded} = Protocol.encode_outbound(envelope)
+        assert byte_size(encoded) < Protocol.elixir_to_ui_cap()
+      end)
+
+    assert log =~ "protocol frame size nearing cap direction=elixir_to_ui"
   end
 
   test "contract fixture aligns caps, envelope semantics, and framing sample" do

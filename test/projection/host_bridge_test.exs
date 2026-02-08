@@ -1,6 +1,8 @@
 defmodule Projection.HostBridgeTest do
   use ExUnit.Case, async: true
 
+  import ExUnit.CaptureLog
+
   alias ProjectionUI.HostBridge
 
   defmodule SessionStub do
@@ -49,6 +51,63 @@ defmodule Projection.HostBridgeTest do
     assert_receive {:session_envelope,
                     %{"t" => "error", "sid" => "S9", "code" => "decode_error"}},
                    1_000
+  end
+
+  test "oversized inbound frame emits frame_too_large error envelope and resync" do
+    {:ok, session} = start_supervised({SessionStub, self()})
+
+    {:ok, owner} =
+      start_supervised(
+        {HostBridge,
+         [
+           session: session,
+           sid: "S2",
+           command: "/bin/cat"
+         ]}
+      )
+
+    port = wait_for_port!(owner)
+    huge_payload = String.duplicate("a", Projection.Protocol.ui_to_elixir_cap() + 1)
+    assert true == Port.command(port, huge_payload)
+
+    assert_receive {:session_envelope, %{"t" => "ready", "sid" => "S2"}}, 1_000
+
+    assert_receive {:session_envelope,
+                    %{"t" => "error", "sid" => "S2", "code" => "frame_too_large"}},
+                   1_000
+  end
+
+  test "oversized outbound envelope is logged and dropped without crashing host bridge" do
+    {:ok, session} = start_supervised({SessionStub, self()})
+
+    {:ok, owner} =
+      start_supervised(
+        {HostBridge,
+         [
+           session: session,
+           sid: "S3",
+           command: "/bin/cat"
+         ]}
+      )
+
+    _port = wait_for_port!(owner)
+
+    oversized_envelope = %{
+      "t" => "render",
+      "sid" => "S3",
+      "rev" => 1,
+      "vm" => %{"payload" => String.duplicate("a", Projection.Protocol.elixir_to_ui_cap())}
+    }
+
+    log =
+      capture_log(fn ->
+        HostBridge.send_envelope(owner, oversized_envelope)
+        Process.sleep(50)
+      end)
+
+    assert log =~ "ui_host outbound encode failed: :frame_too_large"
+    assert Process.alive?(owner)
+    refute_receive {:session_envelope, _}, 100
   end
 
   defp wait_for_port!(owner, attempts \\ 40)
