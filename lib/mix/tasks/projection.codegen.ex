@@ -54,7 +54,10 @@ defmodule Mix.Tasks.Projection.Codegen do
       |> Enum.map(&unwrap_task_result!/1)
 
     mod_result =
-      write_file_if_changed(Path.join(generated_dir, "mod.rs"), render_generated_mod(specs))
+      write_file_if_changed(
+        Path.join(generated_dir, "mod.rs"),
+        render_generated_mod(specs, routes)
+      )
 
     routes_result =
       write_file_if_changed(Path.join(generated_dir, "routes.slint"), render_routes_slint(routes))
@@ -413,7 +416,7 @@ defmodule Mix.Tasks.Projection.Codegen do
     System.schedulers_online()
   end
 
-  defp render_generated_mod([]) do
+  defp render_generated_mod([], _routes) do
     """
     use crate::AppWindow;
     use crate::protocol::PatchOp;
@@ -436,7 +439,7 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
   end
 
-  defp render_generated_mod(specs) do
+  defp render_generated_mod(specs, routes) do
     [first | rest] = specs
 
     module_lines =
@@ -450,10 +453,13 @@ defmodule Mix.Tasks.Projection.Codegen do
         "    #{camelize(spec.screen_name)},"
       end)
 
+    screen_id_names = route_screen_name_map(routes, specs)
+
     enum_from_vm_arms =
-      specs
-      |> Enum.map_join("\n", fn spec ->
-        "        Some(\"#{spec.screen_name}\") => ScreenId::#{camelize(spec.screen_name)},"
+      screen_id_names
+      |> Enum.sort_by(&elem(&1, 0))
+      |> Enum.map_join("\n", fn {vm_screen_name, screen_name} ->
+        "        Some(\"#{vm_screen_name}\") => ScreenId::#{camelize(screen_name)},"
       end)
 
     render_dispatch_arms =
@@ -505,6 +511,23 @@ defmodule Mix.Tasks.Projection.Codegen do
         }
     }
     """
+  end
+
+  defp route_screen_name_map(routes, specs) do
+    screen_name_by_module = Map.new(specs, &{&1.module, &1.screen_name})
+
+    Enum.reduce(routes, %{}, fn route, acc ->
+      screen_module = route.screen_module
+
+      case screen_name_by_module do
+        %{^screen_module => screen_name} ->
+          Map.put(acc, route.name, screen_name)
+
+        _ ->
+          raise ArgumentError,
+                "route #{inspect(route.name)} references #{inspect(route.screen_module)} without schema metadata"
+      end
+    end)
   end
 
   defp render_screen_module(spec) do

@@ -3,6 +3,16 @@ defmodule Projection.CompileProjectionCodegenTaskTest do
 
   import ExUnit.CaptureIO
 
+  defmodule AliasRouteRouter do
+    use Projection.Router.DSL
+
+    alias ProjectionUI.Screens.Devices
+
+    screen_session :main do
+      screen("/monitoring", Devices, :index, as: :monitoring)
+    end
+  end
+
   test "compile.projection_codegen completes without recursive loadpath failures" do
     Mix.Task.reenable("projection.codegen")
 
@@ -41,5 +51,35 @@ defmodule Projection.CompileProjectionCodegenTaskTest do
         Mix.Tasks.Projection.Codegen.run([])
       end)
     end
+  end
+
+  test "projection.codegen maps aliased route names to the referenced screen id" do
+    original_router_module = Application.get_env(:projection, :router_module)
+    Application.put_env(:projection, :router_module, AliasRouteRouter)
+
+    on_exit(fn ->
+      if original_router_module do
+        Application.put_env(:projection, :router_module, original_router_module)
+      else
+        Application.delete_env(:projection, :router_module)
+      end
+
+      Mix.Task.reenable("projection.codegen")
+
+      capture_io(fn ->
+        Mix.Tasks.Projection.Codegen.run([])
+      end)
+    end)
+
+    Mix.Task.reenable("projection.codegen")
+
+    capture_io(fn ->
+      Mix.Tasks.Projection.Codegen.run([])
+    end)
+
+    mod_rs = File.read!("slint/ui_host/src/generated/mod.rs")
+
+    assert mod_rs =~ "Some(\"monitoring\") => ScreenId::Devices"
+    refute mod_rs =~ "Some(\"devices\") => ScreenId::Devices"
   end
 end
