@@ -87,6 +87,15 @@ Optional:
 - `otp_apps: [:my_app, :my_app_web]` for multi-app module discovery.
 - `screen_modules: [MyApp.Screens.Clock]` for explicit extra screen discovery.
 
+Your app also owns the shared Slint shell files under `lib/projection_ui/ui/`:
+
+- `app_shell.slint`
+- `ui.slint`
+- `screen.slint`
+- `error.slint`
+
+`mix projection.new` scaffolds these for you.
+
 ## Define a screen
 
 ```elixir

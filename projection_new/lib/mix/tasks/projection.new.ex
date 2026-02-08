@@ -19,7 +19,6 @@ defmodule Mix.Tasks.Projection.New do
 
   @switches [module: :string, app: :string, force: :boolean]
   @aliases [m: :module, a: :app, f: :force]
-  @template_root Path.expand("../../../priv/templates/projection.new", __DIR__)
 
   @impl Mix.Task
   def run(args) do
@@ -62,7 +61,9 @@ defmodule Mix.Tasks.Projection.New do
   end
 
   defp copy_templates!(target_path, assigns, force?) do
-    @template_root
+    root = template_root()
+
+    root
     |> Path.join("**/*")
     |> Path.wildcard(match_dot: true)
     |> Enum.filter(&File.regular?/1)
@@ -70,7 +71,7 @@ defmodule Mix.Tasks.Projection.New do
     |> Enum.each(fn source ->
       relative =
         source
-        |> Path.relative_to(@template_root)
+        |> Path.relative_to(root)
         |> String.replace("__app__", assigns[:app])
 
       destination =
@@ -87,6 +88,22 @@ defmodule Mix.Tasks.Projection.New do
         copy_file(source, destination, force: force?)
       end
     end)
+  end
+
+  defp template_root do
+    case :code.priv_dir(:projection_new) do
+      {:error, reason} ->
+        Mix.raise("could not locate projection_new priv directory: #{inspect(reason)}")
+
+      priv_dir ->
+        root = Path.join(to_string(priv_dir), "templates/projection.new")
+
+        unless File.dir?(root) do
+          Mix.raise("projection_new templates directory is missing: #{root}")
+        end
+
+        root
+    end
   end
 
   defp ensure_destination!(path, true), do: create_directory(path)

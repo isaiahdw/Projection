@@ -3,6 +3,8 @@ defmodule Projection.CompileProjectionCodegenTaskTest do
 
   import ExUnit.CaptureIO
 
+  @required_ui_shell_files ~w(app_shell.slint error.slint screen.slint ui.slint)
+
   defmodule AliasRouteRouter do
     use Projection.Router.DSL
 
@@ -11,6 +13,12 @@ defmodule Projection.CompileProjectionCodegenTaskTest do
     screen_session :main do
       screen("/monitoring", Devices, :index, as: :monitoring)
     end
+  end
+
+  setup do
+    restore_ui_shell_files = ensure_required_ui_shell_files!()
+    on_exit(restore_ui_shell_files)
+    :ok
   end
 
   test "compile.projection_codegen completes without recursive loadpath failures" do
@@ -133,5 +141,50 @@ defmodule Projection.CompileProjectionCodegenTaskTest do
 
     assert mod_rs =~ "Some(\"monitoring\") => ScreenId::Devices"
     refute mod_rs =~ "Some(\"devices\") => ScreenId::Devices"
+  end
+
+  defp ensure_required_ui_shell_files! do
+    ui_root = Path.join([File.cwd!(), "lib", "projection_ui", "ui"])
+    File.mkdir_p!(ui_root)
+
+    snapshots =
+      Map.new(@required_ui_shell_files, fn file ->
+        path = Path.join(ui_root, file)
+
+        snapshot =
+          case File.read(path) do
+            {:ok, content} -> {:existing, content}
+            {:error, _reason} -> :missing
+          end
+
+        {file, snapshot}
+      end)
+
+    Enum.each(@required_ui_shell_files, fn file ->
+      path = Path.join(ui_root, file)
+
+      if Map.fetch!(snapshots, file) == :missing do
+        File.write!(path, "// required by projection.codegen tests\n")
+      end
+    end)
+
+    fn ->
+      Enum.each(@required_ui_shell_files, fn file ->
+        path = Path.join(ui_root, file)
+
+        case Map.fetch!(snapshots, file) do
+          {:existing, content} ->
+            File.write!(path, content)
+
+          :missing ->
+            File.rm(path)
+        end
+      end)
+
+      case File.ls(ui_root) do
+        {:ok, []} -> File.rmdir(ui_root)
+        _ -> :ok
+      end
+    end
   end
 end

@@ -10,6 +10,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
   @supported_schema_types [:string, :bool, :integer, :float, :map, :list, :id_table, :component]
   @supported_codegen_types [:string, :bool, :integer, :float, :list, :id_table, :component]
+  @required_ui_shell_files ~w(app_shell.slint error.slint screen.slint ui.slint)
 
   @impl Mix.Task
   def run(_args) do
@@ -25,6 +26,7 @@ defmodule Mix.Tasks.Projection.Codegen do
       |> Enum.sort_by(& &1.module_name)
 
     ensure_codegen_targets!(specs, routes)
+    ensure_required_ui_shell_files!(specs, routes)
 
     generated_dir = Path.join(File.cwd!(), "slint/ui_host/src/generated")
     File.mkdir_p!(generated_dir)
@@ -248,6 +250,35 @@ defmodule Mix.Tasks.Projection.Codegen do
   end
 
   defp ensure_codegen_targets!(_specs, _routes), do: :ok
+
+  defp ensure_required_ui_shell_files!(specs, routes)
+       when specs == [] and routes == [] do
+    :ok
+  end
+
+  defp ensure_required_ui_shell_files!(_specs, _routes) do
+    root = Path.join(File.cwd!(), "lib/projection_ui/ui")
+
+    missing =
+      @required_ui_shell_files
+      |> Enum.reject(fn file ->
+        File.regular?(Path.join(root, file))
+      end)
+
+    if missing != [] do
+      Mix.raise("""
+      projection.codegen requires app-owned Slint shell files under `lib/projection_ui/ui/`.
+
+      Required:
+      #{Enum.map_join(@required_ui_shell_files, "\n", &"  - #{&1}")}
+
+      Missing:
+      #{Enum.map_join(missing, "\n", &"  - #{&1}")}
+
+      You can scaffold these with `mix projection.new` or add them manually.
+      """)
+    end
+  end
 
   defp allow_empty_codegen? do
     System.get_env("PROJECTION_ALLOW_EMPTY") in ["1", "true", "TRUE", "yes", "YES"]

@@ -5,11 +5,13 @@ defmodule <%= module %>.Demo do
 
   @spec run() :: no_return()
   def run do
+    suffix = if match?({:win32, _}, :os.type()), do: ".exe", else: ""
+
     command =
       :<%= app %>
       |> :code.priv_dir()
       |> to_string()
-      |> Path.join("ui_host/ui_host")
+      |> Path.join("ui_host/ui_host" <> suffix)
 
     {:ok, _supervisor} =
       Projection.start_session(

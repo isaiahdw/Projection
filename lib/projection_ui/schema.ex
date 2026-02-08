@@ -237,7 +237,10 @@ defmodule ProjectionUI.Schema do
   end
 
   defp expand_literal!(quoted, caller, label) do
-    expanded = Macro.expand(quoted, caller)
+    expanded =
+      quoted
+      |> Macro.expand(caller)
+      |> normalize_signed_numeric_literals()
 
     if Macro.quoted_literal?(expanded) do
       {value, _binding} = Code.eval_quoted(expanded, [], caller)
@@ -248,6 +251,22 @@ defmodule ProjectionUI.Schema do
         line: caller.line,
         description: "#{label} must be compile-time literals, got: #{Macro.to_string(quoted)}"
     end
+  end
+
+  # Elixir parses signed numeric literals as unary operator AST nodes (e.g. -1
+  # becomes {:-, _, [1]}), which are not considered quoted literals. Normalize
+  # these nodes to plain numeric values before literal validation.
+  defp normalize_signed_numeric_literals(quoted) do
+    Macro.prewalk(quoted, fn
+      {:-, _meta, [value]} when is_integer(value) or is_float(value) ->
+        -value
+
+      {:+, _meta, [value]} when is_integer(value) or is_float(value) ->
+        value
+
+      other ->
+        other
+    end)
   end
 
   defp ensure_schema_declared!(env) do

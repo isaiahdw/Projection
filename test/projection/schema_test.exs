@@ -46,6 +46,17 @@ defmodule Projection.SchemaTest do
     def render(assigns), do: assigns
   end
 
+  defmodule SignedDefaultsScreen do
+    use ProjectionUI, :screen
+
+    schema do
+      field(:offset, :integer, default: -7)
+      field(:ratio, :float, default: -1.5)
+      field(:meta, :map, default: %{delta: -2, scale: -0.75})
+      field(:items, :list, default: [-1, -2, -3])
+    end
+  end
+
   defmodule StatusBadgeComponent do
     use ProjectionUI, :component
 
@@ -99,6 +110,22 @@ defmodule Projection.SchemaTest do
            ]
 
     assert :ok == Schema.validate_render!(ContainerScreen)
+  end
+
+  test "schema accepts signed numeric literals in defaults" do
+    assert SignedDefaultsScreen.schema() == %{
+             offset: -7,
+             ratio: -1.5,
+             meta: %{delta: -2, scale: -0.75},
+             items: [-1, -2, -3]
+           }
+
+    assert SignedDefaultsScreen.__projection_schema__() == [
+             %{name: :items, type: :list, default: [-1, -2, -3]},
+             %{name: :meta, type: :map, default: %{delta: -2, scale: -0.75}},
+             %{name: :offset, type: :integer, default: -7},
+             %{name: :ratio, type: :float, default: -1.5}
+           ]
   end
 
   test "schema supports reusable component fields" do
