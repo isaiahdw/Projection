@@ -20,7 +20,48 @@ This repository is the library core. It intentionally does not ship demo screens
 - Router DSL (`Projection.Router.DSL`) for route-driven screen sessions.
 - Schema DSL (`ProjectionUI.Schema`) for typed screen fields.
 - Codegen (`mix projection.codegen`) for Rust/Slint typed bindings.
-- Compile tasks (`mix compile.projection_codegen`, `mix compile.projection_ui_host`) that consumer apps can opt into.
+- Compile tasks (`mix compile.projection_codegen`, `mix compile.projection_ui_host`) that your app can opt into.
+
+## Architecture
+
+Projection has three runtime parts with clear boundaries:
+
+- Elixir session process (`Projection.Session`):
+  owns screen state, routing, validation, subscriptions, timers, and patch generation.
+- Rust host (`ui_host`):
+  owns transport and patch application to Slint properties/models.
+- Slint UI:
+  owns rendering, input handling, and local visual behavior.
+
+### Authority model
+
+- Elixir is the source of truth.
+- Rust host is policy-free glue.
+- Slint does not contain domain/business logic.
+
+### Dual event-loop model
+
+- BEAM/GenServer loop:
+  handles intents/domain events, computes next state, emits `render`/`patch`.
+- Slint UI loop:
+  handles draw/input, applies property updates on the UI thread.
+
+The host bridges those loops through framed stdio messages.
+
+### Message lifecycle
+
+1. UI host starts and sends `ready`.
+2. Session responds with `render` (full VM snapshot).
+3. User interaction emits `intent` to Elixir.
+4. Session updates state and emits minimal `patch` operations with monotonic `rev`.
+5. Host validates revision ordering, applies patch to Slint, and updates visible UI.
+
+### Routing + screens
+
+- Routes are declared in Elixir with `Projection.Router.DSL`.
+- Each route resolves to a screen module using `use ProjectionUI, :screen`.
+- Screen `schema do ... end` defines typed VM fields used by codegen.
+- Generated bindings connect patch paths to concrete Slint property setters.
 
 ## Install
 
@@ -54,9 +95,9 @@ Generate a new app:
 mix projection.new my_app
 ```
 
-## Consumer setup
+## Application setup
 
-Projection codegen and ui_host build should run in the consumer project, not inside the dependency compile step.
+Projection codegen and ui_host build should run in your app project, not inside dependency compile steps.
 
 In your app `mix.exs`, opt in to Projection compilers:
 
