@@ -1,5 +1,5 @@
 defmodule Projection.SchemaTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias ProjectionUI.Schema
   alias Projection.Session
@@ -133,6 +133,84 @@ defmodule Projection.SchemaTest do
 
     assert_raise CompileError, ~r/must declare `schema do \.\.\. end`/, fn ->
       Code.compile_string(source)
+    end
+  end
+
+  test "nested components are rejected at compile time" do
+    inner_name = :"InnerComp#{System.unique_integer([:positive])}"
+    inner_mod = Module.concat([Projection, inner_name])
+
+    Code.compile_string("""
+    defmodule #{inspect(inner_mod)} do
+      use ProjectionUI, :component
+      schema do
+        field(:label, :string, default: "x")
+      end
+    end
+    """)
+
+    outer_name = :"OuterComp#{System.unique_integer([:positive])}"
+    outer_mod = Module.concat([Projection, outer_name])
+
+    assert_raise CompileError, ~r/nested.*component.*not supported/, fn ->
+      Code.compile_string("""
+      defmodule #{inspect(outer_mod)} do
+        use ProjectionUI, :component
+        schema do
+          component(:nested, #{inspect(inner_mod)})
+        end
+      end
+      """)
+    end
+  end
+
+  test "empty component schema is rejected at compile time" do
+    empty_name = :"EmptyComp#{System.unique_integer([:positive])}"
+    empty_mod = Module.concat([Projection, empty_name])
+
+    Code.compile_string("""
+    defmodule #{inspect(empty_mod)} do
+      use ProjectionUI, :component
+      schema do
+      end
+    end
+    """)
+
+    screen_name = :"EmptyCompScreen#{System.unique_integer([:positive])}"
+    screen_mod = Module.concat([Projection, screen_name])
+
+    assert_raise CompileError, ~r/no schema fields/, fn ->
+      Code.compile_string("""
+      defmodule #{inspect(screen_mod)} do
+        use ProjectionUI, :screen
+        schema do
+          component(:badge, #{inspect(empty_mod)})
+        end
+      end
+      """)
+    end
+  end
+
+  test "validate_render! rejects invalid component values" do
+    screen_name = :"BadCompRender#{System.unique_integer([:positive])}"
+    screen_mod = Module.concat([Projection, screen_name])
+
+    Code.compile_string("""
+    defmodule #{inspect(screen_mod)} do
+      use ProjectionUI, :screen
+      schema do
+        component(:badge, #{inspect(StatusBadgeComponent)})
+      end
+
+      @impl true
+      def render(_assigns) do
+        %{badge: "not_a_map"}
+      end
+    end
+    """)
+
+    assert_raise ArgumentError, ~r/invalid value.*badge/, fn ->
+      Schema.validate_render!(screen_mod)
     end
   end
 
