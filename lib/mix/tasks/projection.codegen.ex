@@ -1828,7 +1828,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
     export component AppWindow inherits Window {
         in property <int> vm_rev: 0;
-        in property <string> app_title: "Projection Demo";
+        in property <string> app_title: "Projection";
         in property <string> active_screen: "#{escape_slint_string(active_screen_default)}";
         in property <bool> nav_can_back: false;
 

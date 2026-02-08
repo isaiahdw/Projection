@@ -29,3 +29,7 @@ erl_crash.dump
 
 # Local planning docs
 /planning/
+
+# Nested generator package build artifacts
+/projection_new/_build/
+/projection_new/deps/

@@ -96,13 +96,13 @@ fn apply_global_props(ui: &AppWindow, vm: &Value) {
     let app_title = vm
         .pointer("/app/title")
         .and_then(Value::as_str)
-        .unwrap_or("Projection Demo");
+        .unwrap_or("Projection");
     ui.set_app_title(app_title.into());
 
     let active_screen = vm
         .pointer("/screen/name")
         .and_then(Value::as_str)
-        .unwrap_or("clock");
+        .unwrap_or("error");
     ui.set_active_screen(active_screen.into());
 
     let nav_can_back = vm

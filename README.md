@@ -34,6 +34,26 @@ defp deps do
 end
 ```
 
+## Starter generator
+
+This repo also includes a companion Mix archive project at `projection_new/`.
+It generates a ready-to-run Projection + Slint starter app (router, hello screen,
+UI templates, and `ui_host` crate scaffold).
+
+Build and install the archive locally:
+
+```bash
+cd projection_new
+mix archive.build
+mix archive.install
+```
+
+Generate a new app:
+
+```bash
+mix projection.new my_app
+```
+
 ## Consumer setup
 
 Projection codegen and ui_host build should run in the consumer project, not inside the dependency compile step.

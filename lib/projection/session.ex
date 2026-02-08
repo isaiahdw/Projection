@@ -106,7 +106,7 @@ defmodule Projection.Session do
   def init(opts) do
     router = normalize_router(Keyword.get(opts, :router))
     screen_session = normalize_screen_session(Keyword.get(opts, :screen_session, %{}))
-    app_title = normalize_app_title(Keyword.get(opts, :app_title, "Projection Demo"))
+    app_title = normalize_app_title(Keyword.get(opts, :app_title, "Projection"))
     subscription_hook = normalize_subscription_hook(Keyword.get(opts, :subscription_hook))
 
     {screen_module, screen_params, screen_state, nav} =
@@ -785,7 +785,7 @@ defmodule Projection.Session do
   end
 
   defp normalize_app_title(title) when is_binary(title) and title != "", do: title
-  defp normalize_app_title(_title), do: "Projection Demo"
+  defp normalize_app_title(_title), do: "Projection"
 
   defp dispatch_outbound(%{host_bridge: nil} = state, _envelopes), do: state
 
