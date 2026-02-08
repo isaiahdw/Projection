@@ -17,16 +17,28 @@ defmodule ProjectionNewTest do
     assert File.regular?(Path.join(target, "config/config.exs"))
     assert File.regular?(Path.join(target, "lib/starter_app/router.ex"))
     assert File.regular?(Path.join(target, "lib/starter_app/screens/hello.ex"))
-    assert File.regular?(Path.join(target, "lib/projection_ui/ui/app_shell.slint"))
-    assert File.regular?(Path.join(target, "lib/projection_ui/ui/error.slint"))
-    assert File.regular?(Path.join(target, "lib/projection_ui/ui/screen.slint"))
-    assert File.regular?(Path.join(target, "lib/projection_ui/ui/ui.slint"))
-    assert File.regular?(Path.join(target, "lib/projection_ui/ui/hello.slint"))
+    assert File.regular?(Path.join(target, "lib/starter_app/ui/app_shell.slint"))
+    assert File.regular?(Path.join(target, "lib/starter_app/ui/error.slint"))
+    assert File.regular?(Path.join(target, "lib/starter_app/ui/screen.slint"))
+    assert File.regular?(Path.join(target, "lib/starter_app/ui/ui.slint"))
+    assert File.regular?(Path.join(target, "lib/starter_app/ui/hello.slint"))
     assert File.regular?(Path.join(target, "slint/ui_host/src/main.rs"))
+    refute File.exists?(Path.join(target, "slint/ui_host/src/protocol.rs"))
+    refute File.exists?(Path.join(target, "slint/ui_host/src/patch_apply.rs"))
 
     mix_exs = File.read!(Path.join(target, "mix.exs"))
     assert mix_exs =~ "app: :starter_app"
     assert mix_exs =~ "compilers: Mix.compilers() ++ [:projection_codegen, :projection_ui_host]"
+
+    ui_host_main = File.read!(Path.join(target, "slint/ui_host/src/main.rs"))
+    assert ui_host_main =~ "projection_ui_host_runtime::app_main!"
+
+    ui_host_cargo = File.read!(Path.join(target, "slint/ui_host/Cargo.toml"))
+    assert ui_host_cargo =~ "runtime_support/projection_ui_host_runtime"
+
+    app_shell = File.read!(Path.join(target, "lib/starter_app/ui/app_shell.slint"))
+    assert app_shell =~ "in property <length> window_width"
+    assert app_shell =~ "in property <length> window_height"
 
     demo_ex = File.read!(Path.join(target, "lib/starter_app/demo.ex"))
     assert demo_ex =~ "Path.join(\"ui_host/ui_host\" <> suffix)"

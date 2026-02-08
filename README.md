@@ -20,6 +20,7 @@ This repository is the library core. It intentionally does not ship demo screens
 - Router DSL (`Projection.Router.DSL`) for route-driven screen sessions.
 - Schema DSL (`ProjectionUI.Schema`) for typed screen fields.
 - Codegen (`mix projection.codegen`) for Rust/Slint typed bindings.
+- Shared Rust host runtime crate (`slint/ui_host_runtime`) used by app-local `ui_host` adapters.
 - Compile tasks (`mix compile.projection_codegen`, `mix compile.projection_ui_host`) that your app can opt into.
 
 ## Architecture
@@ -61,6 +62,7 @@ The host bridges those loops through framed stdio messages.
 - Routes are declared in Elixir with `Projection.Router.DSL`.
 - Each route resolves to a screen module using `use ProjectionUI, :screen`.
 - Screen `schema do ... end` defines typed VM fields used by codegen.
+- `:list` fields default to string lists; use `items: :integer | :float | :bool | :string` for typed lists.
 - Generated bindings connect patch paths to concrete Slint property setters.
 
 ## Install
@@ -79,7 +81,10 @@ end
 
 This repo also includes a companion Mix archive project at `projection_new/`.
 It generates a ready-to-run Projection + Slint starter app (router, hello screen,
-UI templates, and `ui_host` crate scaffold).
+UI templates, and a thin `ui_host` adapter crate).
+
+The generated app does not copy large host runtime files into your project.
+`mix compile.projection_ui_host` syncs the runtime support crate from your Projection dependency.
 
 Build and install the archive locally:
 
@@ -127,8 +132,9 @@ Optional:
 
 - `otp_apps: [:my_app, :my_app_web]` for multi-app module discovery.
 - `screen_modules: [MyApp.Screens.Clock]` for explicit extra screen discovery.
+- `ui_root: "lib/my_app/ui"` to override where Slint shell/screen files live. Default is `lib/<otp_app>/ui`.
 
-Your app also owns the shared Slint shell files under `lib/projection_ui/ui/`:
+Your app also owns the shared Slint shell files under `lib/<otp_app>/ui/`:
 
 - `app_shell.slint`
 - `ui.slint`
@@ -136,6 +142,102 @@ Your app also owns the shared Slint shell files under `lib/projection_ui/ui/`:
 - `error.slint`
 
 `mix projection.new` scaffolds these for you.
+
+## LiveView-style structure
+
+Projection works best when you treat screens like LiveViews and components like LiveComponents.
+
+| LiveView concept | Projection equivalent |
+| --- | --- |
+| `Phoenix.LiveView` module | `use ProjectionUI, :screen` module |
+| `Phoenix.Component` / LiveComponent data contract | `use ProjectionUI, :component` schema |
+| `assigns` | `ProjectionUI.State.assigns` |
+| `handle_event/3` | `handle_event/3` on screen |
+| `Phoenix router + live routes` | `Projection.Router.DSL` `screen` routes |
+| root layout | `app_shell.slint` + `screen_host.slint` (generated) |
+
+## Recommended app layout
+
+Use this as the baseline structure for app code:
+
+```text
+my_app/
+  lib/my_app/
+    application.ex
+    router.ex
+    demo.ex
+    screens/
+      clock.ex
+      devices.ex
+    components/
+      status_badge.ex
+  lib/my_app/ui/
+    app_shell.slint
+    ui.slint
+    screen.slint
+    error.slint
+    clock.slint
+    devices.slint
+    components/
+      status_badge.slint
+  slint/ui_host/
+    Cargo.toml
+    build.rs
+    src/main.rs
+    src/generated/
+```
+
+Notes:
+
+- Keep Elixir screen modules in `lib/<app>/screens/`.
+- Keep reusable schema components in `lib/<app>/components/`.
+- Keep Slint files in `lib/<otp_app>/ui/`.
+- Keep reusable Slint visuals in `lib/<otp_app>/ui/components/`.
+- Define app window defaults in `app_shell.slint` via `window_width` / `window_height`.
+- `slint/ui_host/src/main.rs` should stay thin. Shared runtime logic lives in Projection's `slint/ui_host_runtime` crate and is synced automatically by `mix compile.projection_ui_host`.
+
+## Screen and Slint naming convention
+
+Codegen pairs screen modules to `.slint` files by module name:
+
+- `MyApp.Screens.Clock` -> `lib/my_app/ui/clock.slint`
+- `MyApp.Screens.DeviceDetail` -> `lib/my_app/ui/device_detail.slint`
+
+The exported Slint component should be `<ModuleLastSegment>Screen`:
+
+- `ClockScreen`
+- `DeviceDetailScreen`
+
+This convention keeps routes, screen modules, codegen output, and Slint imports aligned.
+
+## Components (LiveComponent-style contracts)
+
+Define reusable typed contracts with `use ProjectionUI, :component`, then embed them in screens with `component/2`.
+
+```elixir
+defmodule MyApp.Components.StatusBadge do
+  use ProjectionUI, :component
+
+  schema do
+    field :label, :string, default: "Online"
+    field :status, :string, default: "ok"
+  end
+end
+
+defmodule MyApp.Screens.Clock do
+  use ProjectionUI, :screen
+
+  schema do
+    field :clock_text, :string, default: "--:--:--"
+    component :status_badge, MyApp.Components.StatusBadge
+  end
+end
+```
+
+For Slint bindings, component fields are flattened with a prefix:
+
+- `status_badge.label` -> `status_badge_label`
+- `status_badge.status` -> `status_badge_status`
 
 ## Define a screen
 

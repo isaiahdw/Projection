@@ -13,7 +13,7 @@ defmodule ProjectionUI.Schema do
     * `:integer` — default `0`
     * `:float` — default `0.0`
     * `:map` — default `%{}`
-    * `:list` — default `[]`
+    * `:list` — default `[]` (`items: :string | :integer | :float | :bool`, default `:string`)
     * `:id_table` — default `%{order: [], by_id: %{}}`
 
   Component fields are declared with `component/2,3` (not `field/3`):
@@ -31,12 +31,14 @@ defmodule ProjectionUI.Schema do
       schema do
         field :greeting, :string, default: "Hello!"
         field :count, :integer
+        field :tiles, :list, items: :integer, default: [1, 2, 3]
       end
 
   """
 
   @allowed_types [:string, :bool, :integer, :float, :map, :list, :id_table]
   @component_supported_types [:string, :bool, :integer, :float, :list, :id_table]
+  @list_item_types [:string, :integer, :float, :bool]
 
   defmacro __using__(opts) do
     owner = Keyword.get(opts, :owner)
@@ -322,6 +324,34 @@ defmodule ProjectionUI.Schema do
     end
   end
 
+  defp validate_opts!(:list, opts, caller) when is_list(opts) do
+    unknown_keys =
+      opts
+      |> Keyword.keys()
+      |> Enum.uniq()
+      |> Enum.reject(&(&1 in [:default, :items]))
+
+    if unknown_keys != [] do
+      raise CompileError,
+        file: caller.file,
+        line: caller.line,
+        description:
+          "unsupported list field options: #{inspect(unknown_keys)} (supported: [:default, :items])"
+    end
+
+    case Keyword.get(opts, :items, :string) do
+      type when type in @list_item_types ->
+        :ok
+
+      invalid ->
+        raise CompileError,
+          file: caller.file,
+          line: caller.line,
+          description:
+            ":list fields require `items:` to be one of #{inspect(@list_item_types)}, got: #{inspect(invalid)}"
+    end
+  end
+
   defp validate_opts!(_type, opts, _caller) when is_list(opts), do: :ok
 
   defp validate_opts!(_type, opts, caller) do
@@ -346,7 +376,13 @@ defmodule ProjectionUI.Schema do
   defp value_matches_type?(:integer, value, _opts), do: is_integer(value)
   defp value_matches_type?(:float, value, _opts), do: is_float(value)
   defp value_matches_type?(:map, value, _opts), do: is_map(value)
-  defp value_matches_type?(:list, value, _opts), do: is_list(value)
+
+  defp value_matches_type?(:list, value, opts) when is_list(value) and is_list(opts) do
+    item_type = list_item_type(opts)
+    Enum.all?(value, &list_item_matches?(item_type, &1))
+  end
+
+  defp value_matches_type?(:list, _value, _opts), do: false
   defp value_matches_type?(:id_table, value, opts), do: valid_id_table?(value, opts)
   defp value_matches_type?(:component, value, opts), do: valid_component_value?(value, opts)
 
@@ -357,6 +393,13 @@ defmodule ProjectionUI.Schema do
   defp default_for_type(:map), do: %{}
   defp default_for_type(:list), do: []
   defp default_for_type(:id_table), do: %{order: [], by_id: %{}}
+
+  defp list_item_type(opts) when is_list(opts), do: Keyword.get(opts, :items, :string)
+
+  defp list_item_matches?(:string, value), do: is_binary(value)
+  defp list_item_matches?(:integer, value), do: is_integer(value)
+  defp list_item_matches?(:float, value), do: is_float(value)
+  defp list_item_matches?(:bool, value), do: is_boolean(value)
 
   defp valid_id_table?(%{order: order, by_id: by_id}, opts)
        when is_list(order) and is_map(by_id) and is_list(opts) do

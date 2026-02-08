@@ -3206,6 +3206,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "projection_ui_host_runtime"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "slint",
+]
+
+[[package]]
 name = "pulldown-cmark"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4377,7 +4386,7 @@ dependencies = [
 name = "ui_host"
 version = "0.1.0"
 dependencies = [
- "serde",
+ "projection_ui_host_runtime",
  "serde_json",
  "slint",
  "slint-build",

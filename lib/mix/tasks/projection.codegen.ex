@@ -19,6 +19,9 @@ defmodule Mix.Tasks.Projection.Codegen do
     router_module = discover_router_module()
     routes = discover_routes(router_module)
     nav_routes = discover_nav_routes(router_module, routes)
+    ui_root = configured_ui_root()
+    ui_root_from_generated = ui_root_from_generated(ui_root)
+    ui_root_from_ui_host = ui_root_from_ui_host(ui_root)
 
     specs =
       discover_screen_modules(routes)
@@ -26,7 +29,7 @@ defmodule Mix.Tasks.Projection.Codegen do
       |> Enum.sort_by(& &1.module_name)
 
     ensure_codegen_targets!(specs, routes)
-    ensure_required_ui_shell_files!(specs, routes)
+    ensure_required_ui_shell_files!(specs, routes, ui_root)
 
     generated_dir = Path.join(File.cwd!(), "slint/ui_host/src/generated")
     File.mkdir_p!(generated_dir)
@@ -69,13 +72,13 @@ defmodule Mix.Tasks.Projection.Codegen do
     screen_host_result =
       write_file_if_changed(
         Path.join(generated_dir, "screen_host.slint"),
-        render_screen_host_slint(specs, routes, nav_routes)
+        render_screen_host_slint(specs, routes, nav_routes, ui_root_from_generated)
       )
 
     app_result =
       write_file_if_changed(
         Path.join(generated_dir, "app.slint"),
-        render_generated_app_slint(specs, routes)
+        render_generated_app_slint(specs, routes, ui_root_from_generated)
       )
 
     error_state_result =
@@ -87,7 +90,7 @@ defmodule Mix.Tasks.Projection.Codegen do
     build_rs_result =
       write_file_if_changed(
         Path.join(File.cwd!(), "slint/ui_host/build.rs"),
-        render_build_rs(specs)
+        render_build_rs(specs, ui_root_from_ui_host)
       )
 
     removed_count = prune_stale_generated_files(generated_dir, specs)
@@ -251,13 +254,13 @@ defmodule Mix.Tasks.Projection.Codegen do
 
   defp ensure_codegen_targets!(_specs, _routes), do: :ok
 
-  defp ensure_required_ui_shell_files!(specs, routes)
+  defp ensure_required_ui_shell_files!(specs, routes, _ui_root)
        when specs == [] and routes == [] do
     :ok
   end
 
-  defp ensure_required_ui_shell_files!(_specs, _routes) do
-    root = Path.join(File.cwd!(), "lib/projection_ui/ui")
+  defp ensure_required_ui_shell_files!(_specs, _routes, ui_root) do
+    root = Path.join(File.cwd!(), ui_root)
 
     missing =
       @required_ui_shell_files
@@ -267,7 +270,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
     if missing != [] do
       Mix.raise("""
-      projection.codegen requires app-owned Slint shell files under `lib/projection_ui/ui/`.
+      projection.codegen requires app-owned Slint shell files under `#{ui_root}/`.
 
       Required:
       #{Enum.map_join(@required_ui_shell_files, "\n", &"  - #{&1}")}
@@ -282,6 +285,50 @@ defmodule Mix.Tasks.Projection.Codegen do
 
   defp allow_empty_codegen? do
     System.get_env("PROJECTION_ALLOW_EMPTY") in ["1", "true", "TRUE", "yes", "YES"]
+  end
+
+  defp configured_ui_root do
+    configured =
+      case Application.get_env(:projection, :ui_root) do
+        path when is_binary(path) ->
+          path
+          |> String.trim()
+          |> String.trim_leading("./")
+          |> String.trim_trailing("/")
+
+        nil ->
+          default_ui_root()
+
+        other ->
+          Mix.raise("config :projection, :ui_root must be a string, got: #{inspect(other)}")
+      end
+
+    cond do
+      configured == "" ->
+        default_ui_root()
+
+      Path.type(configured) != :relative ->
+        Mix.raise(
+          "config :projection, :ui_root must be a relative path, got: #{inspect(configured)}"
+        )
+
+      true ->
+        configured
+    end
+  end
+
+  defp default_ui_root do
+    "lib/#{configured_otp_app() |> Atom.to_string()}/ui"
+  end
+
+  defp ui_root_from_generated(ui_root) do
+    Path.join(["..", "..", "..", "..", ui_root])
+    |> String.replace("\\", "/")
+  end
+
+  defp ui_root_from_ui_host(ui_root) do
+    Path.join(["..", "..", ui_root])
+    |> String.replace("\\", "/")
   end
 
   defp configured_screen_modules do
@@ -398,6 +445,7 @@ defmodule Mix.Tasks.Projection.Codegen do
       name: :"#{name}_ids",
       type: :list,
       default: ids_default,
+      opts: [items: :string],
       source: %{kind: :id_table, root: name, role: :ids}
     }
 
@@ -409,6 +457,7 @@ defmodule Mix.Tasks.Projection.Codegen do
           name: :"#{name}_#{column}",
           type: :list,
           default: column_values_default,
+          opts: [items: :string],
           source: %{kind: :id_table, root: name, role: {:column, column}}
         }
       end)
@@ -451,6 +500,7 @@ defmodule Mix.Tasks.Projection.Codegen do
       name: :"#{component_root}_#{field_name}_ids",
       type: :list,
       default: ids_default,
+      opts: [items: :string],
       source: %{
         kind: :component_id_table,
         component: component_root,
@@ -467,6 +517,7 @@ defmodule Mix.Tasks.Projection.Codegen do
           name: :"#{component_root}_#{field_name}_#{column}",
           type: :list,
           default: column_values_default,
+          opts: [items: :string],
           source: %{
             kind: :component_id_table,
             component: component_root,
@@ -580,9 +631,8 @@ defmodule Mix.Tasks.Projection.Codegen do
   defp render_generated_mod([], _routes) do
     """
     use crate::AppWindow;
-    use crate::protocol::PatchOp;
+    use projection_ui_host_runtime::PatchOp;
     use serde_json::Value;
-    use std::convert::TryFrom;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
     pub enum ScreenId {
@@ -594,7 +644,12 @@ defmodule Mix.Tasks.Projection.Codegen do
         Ok(ScreenId::Unknown)
     }
 
-    pub fn apply_patch(_ui: &AppWindow, _screen_id: ScreenId, _ops: &[PatchOp], _vm: &Value) -> Result<(), String> {
+    pub fn apply_patch(
+        _ui: &AppWindow,
+        _screen_id: ScreenId,
+        _ops: &[PatchOp],
+        _vm: &Value,
+    ) -> Result<(), String> {
         Ok(())
     }
     """
@@ -606,6 +661,7 @@ defmodule Mix.Tasks.Projection.Codegen do
     module_lines =
       specs
       |> Enum.map(fn spec -> "pub mod #{spec.file_name};" end)
+      |> Enum.map(fn line -> "#[rustfmt::skip]\n#{line}" end)
       |> Enum.join("\n")
 
     enum_variants =
@@ -637,7 +693,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
     """
     use crate::AppWindow;
-    use crate::protocol::PatchOp;
+    use projection_ui_host_runtime::PatchOp;
     use serde_json::Value;
 
     #{module_lines}
@@ -864,9 +920,9 @@ defmodule Mix.Tasks.Projection.Codegen do
 
       parse_helpers =
         (direct_fields ++ component_fields)
-        |> Enum.map(& &1.type)
+        |> Enum.map(&parse_helper_key/1)
         |> Enum.uniq()
-        |> Enum.sort()
+        |> Enum.sort_by(&parse_helper_sort_key/1)
         |> Enum.map_join("\n", &render_parse_helper/1)
 
       id_table_helpers =
@@ -902,7 +958,7 @@ defmodule Mix.Tasks.Projection.Codegen do
 
       """
       use crate::AppWindow;
-      use crate::protocol::PatchOp;
+      use projection_ui_host_runtime::PatchOp;
       use slint::ComponentHandle;
       use serde_json::Value;
 
@@ -950,7 +1006,7 @@ defmodule Mix.Tasks.Projection.Codegen do
   defp render_empty_screen_module do
     """
     use crate::AppWindow;
-    use crate::protocol::PatchOp;
+    use projection_ui_host_runtime::PatchOp;
     use serde_json::Value;
 
     pub fn apply_render(ui: &AppWindow, _vm: &Value) -> Result<(), String> {
@@ -975,13 +1031,14 @@ defmodule Mix.Tasks.Projection.Codegen do
            name: name,
            type: type,
            default: default,
+           opts: opts,
            source: %{kind: :direct}
          },
          global_name
        ) do
     field = Atom.to_string(name)
-    default_literal = rust_literal(type, default)
-    set_value_expr = rust_set_value_expr(name, type, "g")
+    default_literal = rust_literal(type, default, opts)
+    set_value_expr = rust_set_value_expr(name, type, opts, "g")
 
     """
     fn set_#{field}_from_vm(
@@ -1011,6 +1068,7 @@ defmodule Mix.Tasks.Projection.Codegen do
            name: name,
            type: type,
            default: default,
+           opts: opts,
            source: %{kind: :component, component: component_root, field: component_field}
          },
          global_name
@@ -1018,8 +1076,8 @@ defmodule Mix.Tasks.Projection.Codegen do
     field = Atom.to_string(name)
     component_root_name = Atom.to_string(component_root)
     component_field_name = Atom.to_string(component_field)
-    default_literal = rust_literal(type, default)
-    set_value_expr = rust_set_value_expr(name, type, "g")
+    default_literal = rust_literal(type, default, opts)
+    set_value_expr = rust_set_value_expr(name, type, opts, "g")
 
     """
     fn set_#{field}_from_component(
@@ -1407,26 +1465,31 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
   end
 
-  defp rust_set_value_expr(name, :list, setter_target) do
+  defp rust_set_value_expr(name, type, _opts, setter_target)
+       when type in [:string, :bool, :integer, :float] do
+    rust_set_value_expr(name, type, setter_target)
+  end
+
+  defp rust_set_value_expr(name, :list, opts, setter_target) do
+    parse_fn = rust_list_parse_fn(opts)
+    model_expr = rust_list_model_from_parsed_expr(opts)
+
     """
-    let parsed = parse_string_list(value, path)?;
-        let model = slint::VecModel::from(
-            parsed
-                .into_iter()
-                .map(slint::SharedString::from)
-                .collect::<Vec<slint::SharedString>>(),
-        );
+    let parsed = #{parse_fn}(value, path)?;
+        #{model_expr}
         #{setter_target}.set_#{name}(slint::ModelRc::new(model));
         Ok(())
     """
   end
 
-  defp rust_literal(:string, value), do: "\"#{escape_string(value)}\".into()"
-  defp rust_literal(:bool, true), do: "true"
-  defp rust_literal(:bool, false), do: "false"
-  defp rust_literal(:integer, value), do: "i32::try_from(#{value}i64).unwrap_or_default()"
-  defp rust_literal(:float, value), do: "#{format_float(value)}f32"
-  defp rust_literal(:list, value), do: rust_string_list_literal(value)
+  defp rust_literal(type, value), do: rust_literal(type, value, [])
+
+  defp rust_literal(:string, value, _opts), do: "\"#{escape_string(value)}\".into()"
+  defp rust_literal(:bool, true, _opts), do: "true"
+  defp rust_literal(:bool, false, _opts), do: "false"
+  defp rust_literal(:integer, value, _opts), do: "i32::try_from(#{value}i64).unwrap_or_default()"
+  defp rust_literal(:float, value, _opts), do: "#{format_float(value)}f32"
+  defp rust_literal(:list, value, opts), do: rust_list_literal(value, opts)
 
   defp escape_string(value) when is_binary(value) do
     value
@@ -1494,7 +1557,9 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
   end
 
-  defp render_parse_helper(:list) do
+  defp render_parse_helper(:list), do: render_parse_helper({:list, :string})
+
+  defp render_parse_helper({:list, :string}) do
     """
     fn parse_string_list(value: &Value, path: &str) -> Result<Vec<String>, String> {
         let items = value
@@ -1509,6 +1574,66 @@ defmodule Mix.Tasks.Projection.Codegen do
                     .as_str()
                     .map(ToOwned::to_owned)
                     .ok_or_else(|| format!("expected string at path {path}[{index}]"))
+            })
+            .collect()
+    }
+    """
+  end
+
+  defp render_parse_helper({:list, :integer}) do
+    """
+    fn parse_integer_list(value: &Value, path: &str) -> Result<Vec<i64>, String> {
+        let items = value
+            .as_array()
+            .ok_or_else(|| format!("expected list at path {path}"))?;
+
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                entry
+                    .as_i64()
+                    .ok_or_else(|| format!("expected integer at path {path}[{index}]"))
+            })
+            .collect()
+    }
+    """
+  end
+
+  defp render_parse_helper({:list, :float}) do
+    """
+    fn parse_float_list(value: &Value, path: &str) -> Result<Vec<f64>, String> {
+        let items = value
+            .as_array()
+            .ok_or_else(|| format!("expected list at path {path}"))?;
+
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                entry
+                    .as_f64()
+                    .ok_or_else(|| format!("expected float at path {path}[{index}]"))
+            })
+            .collect()
+    }
+    """
+  end
+
+  defp render_parse_helper({:list, :bool}) do
+    """
+    fn parse_bool_list(value: &Value, path: &str) -> Result<Vec<bool>, String> {
+        let items = value
+            .as_array()
+            .ok_or_else(|| format!("expected list at path {path}"))?;
+
+        items
+            .iter()
+            .enumerate()
+            .map(|(index, entry)| {
+                entry
+                    .as_bool()
+                    .ok_or_else(|| format!("expected bool at path {path}[{index}]"))
             })
             .collect()
     }
@@ -1590,7 +1715,9 @@ defmodule Mix.Tasks.Projection.Codegen do
     property_lines =
       spec.fields
       |> Enum.map_join("\n", fn field ->
-        "    in property <#{slint_type(field.type)}> #{field.name}: #{slint_literal(field.type, field.default)};"
+        opts = Map.get(field, :opts, [])
+
+        "    in property <#{slint_type(field.type, opts)}> #{field.name}: #{slint_literal(field.type, field.default, opts)};"
       end)
 
     """
@@ -1605,7 +1732,9 @@ defmodule Mix.Tasks.Projection.Codegen do
     property_lines =
       error_state_fields()
       |> Enum.map_join("\n", fn field ->
-        "    in property <#{slint_type(field.type)}> #{field.name}: #{slint_literal(field.type, field.default)};"
+        opts = Map.get(field, :opts, [])
+
+        "    in property <#{slint_type(field.type, opts)}> #{field.name}: #{slint_literal(field.type, field.default, opts)};"
       end)
 
     """
@@ -1616,32 +1745,32 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
   end
 
-  defp render_build_rs(specs) do
+  defp render_build_rs(specs, ui_root_from_ui_host) do
     state_rerun_lines =
       specs
       |> Enum.map(fn spec ->
         "    println!(\"cargo:rerun-if-changed=src/generated/#{spec.state_file}\");"
       end)
       |> Enum.sort()
-      |> Enum.join("\n")
 
-    """
-    fn main() {
-        slint_build::compile("src/generated/app.slint")
-            .expect("failed to compile app.slint");
+    base_lines = [
+      "fn main() {",
+      "    slint_build::compile(\"src/generated/app.slint\").expect(\"failed to compile app.slint\");",
+      "",
+      "    println!(\"cargo:rerun-if-changed=src/generated/app.slint\");",
+      "    println!(\"cargo:rerun-if-changed=src/generated/screen_host.slint\");",
+      "    println!(\"cargo:rerun-if-changed=src/generated/routes.slint\");",
+      "    println!(\"cargo:rerun-if-changed=src/generated/error_state.slint\");"
+    ]
 
-        println!("cargo:rerun-if-changed=src/generated/app.slint");
-        println!("cargo:rerun-if-changed=src/generated/screen_host.slint");
-        println!("cargo:rerun-if-changed=src/generated/routes.slint");
-        println!("cargo:rerun-if-changed=src/generated/error_state.slint");
-    #{state_rerun_lines}
-
-        println!("cargo:rerun-if-changed=../../lib/projection_ui/ui/");
-    }
-    """
+    (base_lines ++
+       state_rerun_lines ++
+       ["    println!(\"cargo:rerun-if-changed=#{ui_root_from_ui_host}/\");", "}"])
+    |> Enum.join("\n")
+    |> Kernel.<>("\n")
   end
 
-  defp render_screen_host_slint(specs, routes, nav_routes) do
+  defp render_screen_host_slint(specs, routes, nav_routes, ui_root_from_generated) do
     active_screen_default = default_active_screen(routes)
 
     spec_by_module = Map.new(specs, &{&1.module, &1})
@@ -1663,7 +1792,7 @@ defmodule Mix.Tasks.Projection.Codegen do
     screen_import_lines =
       routes_with_specs
       |> Enum.map(fn {_route, spec} ->
-        "import { #{spec.component_name} } from \"../../../../lib/projection_ui/ui/#{spec.file_name}.slint\";"
+        "import { #{spec.component_name} } from \"#{ui_root_from_generated}/#{spec.file_name}.slint\";"
       end)
       |> Enum.uniq()
       |> Enum.sort()
@@ -1692,7 +1821,7 @@ defmodule Mix.Tasks.Projection.Codegen do
     """
     // generated by mix projection.codegen; do not edit manually
     #{import_lines}
-    import { ErrorScreen } from "../../../../lib/projection_ui/ui/error.slint";
+    import { ErrorScreen } from "#{ui_root_from_generated}/error.slint";
     import { ErrorState } from "error_state.slint";
     import { Routes } from "routes.slint";
 
@@ -1825,20 +1954,28 @@ defmodule Mix.Tasks.Projection.Codegen do
     |> Enum.map_join(" ", &String.capitalize/1)
   end
 
-  defp slint_type(:string), do: "string"
-  defp slint_type(:bool), do: "bool"
-  defp slint_type(:integer), do: "int"
-  defp slint_type(:float), do: "float"
-  defp slint_type(:list), do: "[string]"
+  defp slint_type(:string, _opts), do: "string"
+  defp slint_type(:bool, _opts), do: "bool"
+  defp slint_type(:integer, _opts), do: "int"
+  defp slint_type(:float, _opts), do: "float"
 
-  defp slint_literal(:string, value), do: "\"#{escape_slint_string(value)}\""
-  defp slint_literal(:bool, true), do: "true"
-  defp slint_literal(:bool, false), do: "false"
-  defp slint_literal(:integer, value), do: Integer.to_string(value)
-  defp slint_literal(:float, value), do: format_float(value)
-  defp slint_literal(:list, value), do: slint_string_list_literal(value)
+  defp slint_type(:list, opts) do
+    item_type =
+      opts
+      |> list_item_type()
+      |> slint_list_item_type()
 
-  defp render_generated_app_slint(specs, routes) do
+    "[#{item_type}]"
+  end
+
+  defp slint_literal(:string, value, _opts), do: "\"#{escape_slint_string(value)}\""
+  defp slint_literal(:bool, true, _opts), do: "true"
+  defp slint_literal(:bool, false, _opts), do: "false"
+  defp slint_literal(:integer, value, _opts), do: Integer.to_string(value)
+  defp slint_literal(:float, value, _opts), do: format_float(value)
+  defp slint_literal(:list, value, opts), do: slint_list_literal(value, opts)
+
+  defp render_generated_app_slint(specs, routes, ui_root_from_generated) do
     active_screen_default = default_active_screen(routes)
 
     state_export_lines =
@@ -1851,9 +1988,9 @@ defmodule Mix.Tasks.Projection.Codegen do
 
     """
     // generated by mix projection.codegen; do not edit manually
-    import { AppShell } from "../../../../lib/projection_ui/ui/app_shell.slint";
+    import { AppShell } from "#{ui_root_from_generated}/app_shell.slint";
     import { ScreenHost } from "screen_host.slint";
-    export { UI } from "../../../../lib/projection_ui/ui/ui.slint";
+    export { UI } from "#{ui_root_from_generated}/ui.slint";
     #{state_export_lines}
     export { ErrorState } from "error_state.slint";
 
@@ -1866,13 +2003,7 @@ defmodule Mix.Tasks.Projection.Codegen do
         callback ui_intent(intent_name: string, intent_arg: string);
         callback navigate(route_name: string, params_json: string);
 
-        width: 480px;
-        height: 320px;
-        background: #1a1a2e;
-
-        AppShell {
-            width: root.width;
-            height: root.height;
+        shell := AppShell {
             app_title: root.app_title;
             show_back: root.nav_can_back;
             nav_back => { root.ui_intent("ui.back", ""); }
@@ -1884,6 +2015,10 @@ defmodule Mix.Tasks.Projection.Codegen do
                 navigate(route_name, params_json) => { root.navigate(route_name, params_json); }
             }
         }
+
+        width: shell.window_width;
+        height: shell.window_height;
+        background: #1a1a2e;
     }
     """
   end
@@ -1899,28 +2034,129 @@ defmodule Mix.Tasks.Projection.Codegen do
     ]
   end
 
-  defp slint_string_list_literal(values) when is_list(values) do
+  defp parse_helper_key(%{type: :list, opts: opts}), do: {:list, list_item_type(opts)}
+  defp parse_helper_key(%{type: type}), do: type
+
+  defp parse_helper_sort_key({:list, item_type}), do: {1, item_type}
+  defp parse_helper_sort_key(type), do: {0, type}
+
+  defp list_item_type(opts) when is_list(opts) do
+    case Keyword.get(opts, :items, :string) do
+      type when type in [:string, :integer, :float, :bool] -> type
+      other -> raise ArgumentError, "unsupported list item type for codegen: #{inspect(other)}"
+    end
+  end
+
+  defp list_item_type(_opts), do: :string
+
+  defp slint_list_item_type(:string), do: "string"
+  defp slint_list_item_type(:integer), do: "int"
+  defp slint_list_item_type(:float), do: "float"
+  defp slint_list_item_type(:bool), do: "bool"
+
+  defp slint_list_literal(values, opts) when is_list(values) do
+    item_type = list_item_type(opts)
+
     values
-    |> Enum.map(fn
-      value when is_binary(value) -> "\"#{escape_slint_string(value)}\""
-      value -> raise ArgumentError, "expected list default of strings, got: #{inspect(value)}"
-    end)
+    |> Enum.map(&slint_list_item_literal(&1, item_type))
     |> Enum.join(", ")
     |> then(&"[#{&1}]")
   end
 
-  defp rust_string_list_literal(values) when is_list(values) do
-    items =
-      values
-      |> Enum.map(fn
-        value when is_binary(value) ->
-          "\"#{escape_string(value)}\".into()"
+  defp slint_list_item_literal(value, :string) when is_binary(value),
+    do: "\"#{escape_slint_string(value)}\""
 
-        value ->
-          raise ArgumentError, "expected list default of strings, got: #{inspect(value)}"
-      end)
-      |> Enum.join(", ")
+  defp slint_list_item_literal(value, :integer) when is_integer(value),
+    do: Integer.to_string(value)
+
+  defp slint_list_item_literal(value, :float) when is_float(value),
+    do: format_float(value)
+
+  defp slint_list_item_literal(true, :bool), do: "true"
+  defp slint_list_item_literal(false, :bool), do: "false"
+
+  defp slint_list_item_literal(value, item_type) do
+    raise ArgumentError,
+          "expected list default items of #{inspect(item_type)}, got: #{inspect(value)}"
+  end
+
+  defp rust_list_literal(values, opts) when is_list(values) do
+    item_type = list_item_type(opts)
+    items = Enum.map_join(values, ", ", &rust_list_item_literal(&1, item_type))
 
     "slint::ModelRc::new(slint::VecModel::from(vec![#{items}]))"
+  end
+
+  defp rust_list_item_literal(value, :string) when is_binary(value),
+    do: "\"#{escape_string(value)}\".into()"
+
+  defp rust_list_item_literal(value, :integer) when is_integer(value),
+    do: "i32::try_from(#{value}i64).unwrap_or_default()"
+
+  defp rust_list_item_literal(value, :float) when is_float(value),
+    do: "#{format_float(value)}f32"
+
+  defp rust_list_item_literal(true, :bool), do: "true"
+  defp rust_list_item_literal(false, :bool), do: "false"
+
+  defp rust_list_item_literal(value, item_type) do
+    raise ArgumentError,
+          "expected list default items of #{inspect(item_type)}, got: #{inspect(value)}"
+  end
+
+  defp rust_list_parse_fn(opts) do
+    case list_item_type(opts) do
+      :string -> "parse_string_list"
+      :integer -> "parse_integer_list"
+      :float -> "parse_float_list"
+      :bool -> "parse_bool_list"
+    end
+  end
+
+  defp rust_list_model_from_parsed_expr(opts) do
+    case list_item_type(opts) do
+      :string ->
+        """
+        let model = slint::VecModel::from(
+            parsed
+                .into_iter()
+                .map(slint::SharedString::from)
+                .collect::<Vec<slint::SharedString>>(),
+        );
+        """
+
+      :integer ->
+        """
+        let values = parsed
+            .into_iter()
+            .map(|entry| {
+                i32::try_from(entry)
+                    .map_err(|_| format!("value out of range for Slint int at path {path}: {entry}"))
+            })
+            .collect::<Result<Vec<i32>, String>>()?;
+        let model = slint::VecModel::from(values);
+        """
+
+      :float ->
+        """
+        let values = parsed
+            .into_iter()
+            .map(|entry| {
+                let casted = entry as f32;
+                if casted.is_finite() {
+                    Ok(casted)
+                } else {
+                    Err(format!("non-finite float at path {path}: {entry}"))
+                }
+            })
+            .collect::<Result<Vec<f32>, String>>()?;
+        let model = slint::VecModel::from(values);
+        """
+
+      :bool ->
+        """
+        let model = slint::VecModel::from(parsed);
+        """
+    end
   end
 end

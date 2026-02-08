@@ -53,8 +53,22 @@ defmodule Projection.SchemaTest do
       field(:offset, :integer, default: -7)
       field(:ratio, :float, default: -1.5)
       field(:meta, :map, default: %{delta: -2, scale: -0.75})
-      field(:items, :list, default: [-1, -2, -3])
+      field(:items, :list, items: :integer, default: [-1, -2, -3])
     end
+  end
+
+  defmodule TypedListScreen do
+    use ProjectionUI, :screen
+
+    schema do
+      field(:tiles, :list, items: :integer, default: [1, 2, 3])
+      field(:ratios, :list, items: :float, default: [1.0, 0.5])
+      field(:flags, :list, items: :bool, default: [true, false])
+      field(:tabs, :list, default: ["clock", "devices"])
+    end
+
+    @impl true
+    def render(assigns), do: assigns
   end
 
   defmodule StatusBadgeComponent do
@@ -121,11 +135,61 @@ defmodule Projection.SchemaTest do
            }
 
     assert SignedDefaultsScreen.__projection_schema__() == [
-             %{name: :items, type: :list, default: [-1, -2, -3]},
+             %{name: :items, type: :list, default: [-1, -2, -3], opts: [items: :integer]},
              %{name: :meta, type: :map, default: %{delta: -2, scale: -0.75}},
              %{name: :offset, type: :integer, default: -7},
              %{name: :ratio, type: :float, default: -1.5}
            ]
+  end
+
+  test "schema supports typed list items" do
+    assert TypedListScreen.schema() == %{
+             flags: [true, false],
+             ratios: [1.0, 0.5],
+             tabs: ["clock", "devices"],
+             tiles: [1, 2, 3]
+           }
+
+    assert TypedListScreen.__projection_schema__() == [
+             %{name: :flags, type: :list, default: [true, false], opts: [items: :bool]},
+             %{name: :ratios, type: :list, default: [1.0, 0.5], opts: [items: :float]},
+             %{name: :tabs, type: :list, default: ["clock", "devices"]},
+             %{name: :tiles, type: :list, default: [1, 2, 3], opts: [items: :integer]}
+           ]
+
+    assert :ok == Schema.validate_render!(TypedListScreen)
+  end
+
+  test "schema rejects invalid :list item type option" do
+    module_name = :"InvalidListItems#{System.unique_integer([:positive])}"
+    module = Module.concat([Projection, module_name])
+
+    assert_raise CompileError, ~r/:list fields require `items:` to be one of/, fn ->
+      Code.compile_string("""
+      defmodule #{inspect(module)} do
+        use ProjectionUI, :screen
+        schema do
+          field(:values, :list, items: :map, default: [])
+        end
+      end
+      """)
+    end
+  end
+
+  test "schema rejects list defaults that do not match item type" do
+    module_name = :"InvalidListDefault#{System.unique_integer([:positive])}"
+    module = Module.concat([Projection, module_name])
+
+    assert_raise CompileError, ~r/invalid default for :values/, fn ->
+      Code.compile_string("""
+      defmodule #{inspect(module)} do
+        use ProjectionUI, :screen
+        schema do
+          field(:values, :list, items: :integer, default: ["1", "2"])
+        end
+      end
+      """)
+    end
   end
 
   test "schema supports reusable component fields" do

@@ -39,8 +39,9 @@ defmodule Projection.MixProject do
         slint/ui_host/build.rs
         slint/ui_host/.gitignore
         slint/ui_host/src/main.rs
-        slint/ui_host/src/protocol.rs
-        slint/ui_host/src/patch_apply.rs
+        slint/ui_host_runtime/Cargo.toml
+        slint/ui_host_runtime/src/lib.rs
+        slint/ui_host_runtime/src/protocol.rs
         mix.exs
         mix.lock
         README.md

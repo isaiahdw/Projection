@@ -94,6 +94,97 @@ defmodule Projection.CompileProjectionCodegenTaskTest do
     end
   end
 
+  test "projection.codegen emits typed list bindings from schema items option" do
+    module_name = :"TypedListScreen#{System.unique_integer([:positive])}"
+    module = Module.concat([Projection, module_name])
+
+    source = """
+    defmodule #{inspect(module)} do
+      use ProjectionUI, :screen
+
+      schema do
+        field :tiles, :list, items: :integer, default: [1, 2, 3]
+        field :ratios, :list, items: :float, default: [1.0, 0.5]
+        field :flags, :list, items: :bool, default: [true, false]
+        field :labels, :list, default: ["a", "b"]
+      end
+
+      @impl true
+      def render(assigns), do: assigns
+    end
+    """
+
+    Code.compile_string(source)
+
+    original_router_module = Application.get_env(:projection, :router_module)
+    original_screen_modules = Application.get_env(:projection, :screen_modules)
+    Application.delete_env(:projection, :router_module)
+    Application.put_env(:projection, :screen_modules, [module])
+
+    on_exit(fn ->
+      if original_router_module do
+        Application.put_env(:projection, :router_module, original_router_module)
+      else
+        Application.delete_env(:projection, :router_module)
+      end
+
+      if is_nil(original_screen_modules) do
+        Application.delete_env(:projection, :screen_modules)
+      else
+        Application.put_env(:projection, :screen_modules, original_screen_modules)
+      end
+
+      Mix.Task.reenable("projection.codegen")
+
+      capture_io(fn ->
+        previous_allow_empty = System.get_env("PROJECTION_ALLOW_EMPTY")
+        System.put_env("PROJECTION_ALLOW_EMPTY", "1")
+
+        try do
+          Mix.Tasks.Projection.Codegen.run([])
+        after
+          if is_nil(previous_allow_empty) do
+            System.delete_env("PROJECTION_ALLOW_EMPTY")
+          else
+            System.put_env("PROJECTION_ALLOW_EMPTY", previous_allow_empty)
+          end
+        end
+      end)
+    end)
+
+    Mix.Task.reenable("projection.codegen")
+
+    capture_io(fn ->
+      Mix.Tasks.Projection.Codegen.run([])
+    end)
+
+    screen_name =
+      module
+      |> Module.split()
+      |> List.last()
+      |> Macro.underscore()
+
+    state_slint = File.read!("slint/ui_host/src/generated/#{screen_name}_state.slint")
+    assert state_slint =~ "in property <[int]> tiles: [1, 2, 3];"
+    assert state_slint =~ ~r/in property <\[float\]> ratios: \[(1|1\.0), 0\.5\];/
+    assert state_slint =~ "in property <[bool]> flags: [true, false];"
+    assert state_slint =~ "in property <[string]> labels: [\"a\", \"b\"];"
+
+    screen_rs = File.read!("slint/ui_host/src/generated/#{screen_name}.rs")
+
+    assert screen_rs =~
+             "fn parse_integer_list(value: &Value, path: &str) -> Result<Vec<i64>, String>"
+
+    assert screen_rs =~
+             "fn parse_float_list(value: &Value, path: &str) -> Result<Vec<f64>, String>"
+
+    assert screen_rs =~
+             "fn parse_bool_list(value: &Value, path: &str) -> Result<Vec<bool>, String>"
+
+    assert screen_rs =~ "collect::<Result<Vec<i32>, String>>()?"
+    assert screen_rs =~ "let model = slint::VecModel::from(parsed);"
+  end
+
   test "projection.codegen maps aliased route names to the referenced screen id" do
     original_router_module = Application.get_env(:projection, :router_module)
     original_screen_modules = Application.get_env(:projection, :screen_modules)
@@ -144,7 +235,7 @@ defmodule Projection.CompileProjectionCodegenTaskTest do
   end
 
   defp ensure_required_ui_shell_files! do
-    ui_root = Path.join([File.cwd!(), "lib", "projection_ui", "ui"])
+    ui_root = Path.join(File.cwd!(), configured_ui_root())
     File.mkdir_p!(ui_root)
 
     snapshots =
@@ -185,6 +276,22 @@ defmodule Projection.CompileProjectionCodegenTaskTest do
         {:ok, []} -> File.rmdir(ui_root)
         _ -> :ok
       end
+    end
+  end
+
+  defp configured_ui_root do
+    case Application.get_env(:projection, :ui_root) do
+      path when is_binary(path) and path != "" ->
+        path
+
+      _ ->
+        app =
+          case Mix.Project.config()[:app] do
+            value when is_atom(value) -> Atom.to_string(value)
+            _ -> "projection"
+          end
+
+        Path.join(["lib", app, "ui"])
     end
   end
 end

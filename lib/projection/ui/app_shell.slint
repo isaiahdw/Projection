@@ -1,6 +1,8 @@
 export component AppShell inherits Rectangle {
     in property <string> app_title: "Projection";
     in property <bool> show_back: false;
+    in property <length> window_width: 480px;
+    in property <length> window_height: 320px;
 
     callback nav_back();
 

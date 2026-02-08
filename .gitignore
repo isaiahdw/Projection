@@ -26,6 +26,7 @@ projection-*.tar
 # Generated projection artifacts
 /priv/ui_host/
 /slint/ui_host/target/
+/slint/ui_host_runtime/target/
 /slint/ui_host/src/generated/*.rs
 /slint/ui_host/src/generated/*.slint
 
